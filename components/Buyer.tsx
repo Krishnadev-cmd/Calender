@@ -1,403 +1,543 @@
-import React, { useState, useEffect } from 'react'
+﻿import React, { useState, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
-import { googleCalendarService, TimeSlot } from '@/lib/googleCalendar'
+import supabase from '@/lib/supabase'
 
-interface Seller {
-  id: string
-  name: string
-  email: string
-  specialties: string[]
-  rating: number
-  isConnected: boolean
-}
-
-interface BookingDetails {
-  sellerId: string
-  sellerName: string
-  timeSlot: TimeSlot
-  notes: string
-}
+// Simple Input component
+const Input = React.forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLInputElement>>(
+  ({ className, type, ...props }, ref) => {
+    return (
+      <input
+        type={type}
+        className={`flex h-10 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:cursor-not-allowed disabled:opacity-50 ${className || ''}`}
+        ref={ref}
+        {...props}
+      />
+    )
+  }
+)
 
 interface BuyerProps {
   isGoogleConnected?: boolean
 }
 
+interface Seller {
+  id: string
+  user_id: string
+  business_name: string
+  description: string
+  location: string
+  availability_settings: any
+  user_profiles: {
+    full_name: string
+    email: string
+  }
+}
+
+interface Appointment {
+  id: string
+  title: string
+  description: string
+  start_time: string
+  end_time: string
+  status: string
+  sellers: {
+    business_name: string
+    location: string
+  }
+}
+
 const Buyer = ({ isGoogleConnected = false }: BuyerProps) => {
   const [sellers, setSellers] = useState<Seller[]>([])
-  const [selectedSeller, setSelectedSeller] = useState<Seller | null>(null)
-  const [availableSlots, setAvailableSlots] = useState<TimeSlot[]>([])
-  const [booking, setBooking] = useState<BookingDetails | null>(null)
-  const [loading, setLoading] = useState(false)
+  const [appointments, setAppointments] = useState<Appointment[]>([])
   const [searchTerm, setSearchTerm] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [selectedSeller, setSelectedSeller] = useState<Seller | null>(null)
+  const [showBookingModal, setShowBookingModal] = useState(false)
+  const [availableSlots, setAvailableSlots] = useState<Array<{start: string, end: string, available: boolean}>>([])
+  const [loadingAvailability, setLoadingAvailability] = useState(false)
+  const [bookingForm, setBookingForm] = useState({
+    title: '',
+    description: '',
+    date: '',
+    time: '',
+    duration: 60
+  })
 
-  const handleGoogleSignIn = () => {
-    const authUrl = googleCalendarService.getAuthUrl('buyer')
-    
-    if (authUrl === '#google-oauth-not-configured') {
-      alert('Google Calendar integration is not configured yet. Please set up Google Cloud Console credentials.')
-      return
-    }
-    
-    window.location.href = authUrl
-  }
+  useEffect(() => {
+    console.log('Buyer component mounted, loading data...')
+    loadSellers()
+    loadAppointments()
+  }, [])
 
-  // Mock sellers data - in real app, this would come from your database
-  const mockSellers: Seller[] = [
-    {
-      id: '1',
-      name: 'Dr. Sarah Johnson',
-      email: 'sarah.johnson@example.com',
-      specialties: ['Medical Consultation', 'Health Advice'],
-      rating: 4.9,
-      isConnected: true
-    },
-    {
-      id: '2',
-      name: 'John Smith',
-      email: 'john.smith@example.com',
-      specialties: ['Business Consulting', 'Strategy'],
-      rating: 4.7,
-      isConnected: true
-    },
-    {
-      id: '3',
-      name: 'Emma Davis',
-      email: 'emma.davis@example.com',
-      specialties: ['Fitness Training', 'Nutrition'],
-      rating: 4.8,
-      isConnected: true
-    }
-  ]
-
-  const loadAvailability = async (seller: Seller) => {
+  const loadSellers = async () => {
     setLoading(true)
     try {
-      const timeMin = new Date().toISOString()
-      const timeMax = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString() // Next 7 days
-      
-      // In real app, you'd call the seller's calendar availability
-      const slots = await googleCalendarService.getFreeBusy(timeMin, timeMax, seller.email)
-      setAvailableSlots(slots.filter(slot => slot.available))
+      // First, let's try a simple query without joins
+      const { data: sellersData, error: sellersError } = await supabase
+        .from('sellers')
+        .select('*')
+
+      if (sellersError) {
+        console.error('Error loading sellers:', sellersError)
+        setSellers([])
+      } else {
+        console.log('Sellers data:', sellersData)
+        
+        if (sellersData && sellersData.length > 0) {
+          // For each seller, fetch the user profile separately
+          const sellersWithProfiles = await Promise.all(
+            sellersData.map(async (seller) => {
+              const { data: profileData } = await supabase
+                .from('user_profiles')
+                .select('full_name, email')
+                .eq('id', seller.user_id)
+                .single()
+
+              return {
+                ...seller,
+                user_profiles: profileData || { full_name: 'Unknown', email: '' }
+              }
+            })
+          )
+          
+          setSellers(sellersWithProfiles)
+        } else {
+          setSellers([])
+        }
+      }
     } catch (error) {
-      console.error('Failed to load availability:', error)
+      console.error('Error loading sellers:', error)
+      setSellers([])
     } finally {
       setLoading(false)
     }
   }
 
-  const handleBookAppointment = async () => {
-    if (!booking) return
-
+  const loadAppointments = async () => {
     try {
-      setLoading(true)
-      const eventData = {
-        summary: `Appointment with ${booking.sellerName}`,
-        start: booking.timeSlot.start,
-        end: booking.timeSlot.end,
-        attendees: [booking.sellerId], // seller's email
-        description: booking.notes
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+
+      const { data, error } = await supabase
+        .from('appointments')
+        .select(`
+          id,
+          title,
+          description,
+          start_time,
+          end_time,
+          status,
+          seller_id,
+          sellers (
+            business_name,
+            location
+          )
+        `)
+        .eq('buyer_id', user.id)
+        .order('start_time', { ascending: true })
+
+      if (error) {
+        console.error('Error loading appointments:', error)
+        setAppointments([])
+      } else {
+        console.log('Raw appointments data:', data)
+        // Transform the data to handle the sellers relationship properly
+        const transformedAppointments = (data || []).map((appointment: any) => ({
+          ...appointment,
+          sellers: appointment.sellers || { business_name: 'Unknown', location: 'Unknown' }
+        }))
+        console.log('Transformed appointments:', transformedAppointments)
+        setAppointments(transformedAppointments)
+      }
+    } catch (error) {
+      console.error('Error loading appointments:', error)
+      setAppointments([])
+    }
+  }
+
+  const loadAvailability = async (sellerId: string, selectedDate: string) => {
+    if (!selectedDate) return
+
+    setLoadingAvailability(true)
+    try {
+      const timeMin = new Date(selectedDate)
+      timeMin.setHours(0, 0, 0, 0)
+      const timeMax = new Date(selectedDate)
+      timeMax.setHours(23, 59, 59, 999)
+
+      const response = await fetch('/api/calendar/freebusy', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          timeMin: timeMin.toISOString(),
+          timeMax: timeMax.toISOString(),
+          calendarId: 'primary'
+        })
+      })
+
+      if (response.ok) {
+        const slots = await response.json()
+        setAvailableSlots(slots.filter((slot: any) => slot.available))
+      } else {
+        console.error('Failed to load availability')
+        setAvailableSlots([])
+      }
+    } catch (error) {
+      console.error('Error loading availability:', error)
+      setAvailableSlots([])
+    } finally {
+      setLoadingAvailability(false)
+    }
+  }
+
+  const filteredSellers = sellers.filter(seller =>
+    seller.business_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    seller.description?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    seller.location?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    seller.user_profiles?.full_name?.toLowerCase().includes(searchTerm.toLowerCase())
+  )
+
+  const handleBookAppointment = async () => {
+    if (!selectedSeller || !bookingForm.title || !bookingForm.date || !bookingForm.time) {
+      alert('Please fill in all required fields')
+      return
+    }
+
+    setLoading(true)
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+
+      const startDateTime = new Date(`${bookingForm.date}T${bookingForm.time}`)
+      const endDateTime = new Date(startDateTime.getTime() + bookingForm.duration * 60000)
+
+      // Create appointment in database
+      const { data: appointment, error } = await supabase
+        .from('appointments')
+        .insert({
+          buyer_id: user.id,
+          seller_id: selectedSeller.id,
+          title: bookingForm.title,
+          description: bookingForm.description,
+          start_time: startDateTime.toISOString(),
+          end_time: endDateTime.toISOString(),
+          status: 'pending',
+          buyer_email: user.email,
+          seller_email: selectedSeller.user_profiles?.email
+        })
+        .select()
+        .single()
+
+      if (error) {
+        console.error('Error booking appointment:', error)
+        alert('Failed to book appointment. Please try again.')
+        return
       }
 
-      await googleCalendarService.createEvent(eventData)
-      
-      // Reset booking state
-      setBooking(null)
+      // Try to create Google Calendar events (this will use mock data for now)
+      try {
+        const eventResponse = await fetch('/api/calendar/create-event', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            summary: `${bookingForm.title} - ${selectedSeller.business_name}`,
+            description: bookingForm.description || `Appointment with ${selectedSeller.business_name}`,
+            start: startDateTime.toISOString(),
+            end: endDateTime.toISOString(),
+            attendees: [user.email, selectedSeller.user_profiles?.email].filter(Boolean)
+          })
+        })
+
+        if (eventResponse.ok) {
+          const eventData = await eventResponse.json()
+          console.log('Calendar event created:', eventData)
+          
+          // Update appointment with calendar event data
+          await supabase
+            .from('appointments')
+            .update({ 
+              google_event_id: eventData.id,
+              google_meet_link: eventData.meetLink 
+            })
+            .eq('id', appointment.id)
+        }
+      } catch (calendarError) {
+        console.error('Calendar event creation failed:', calendarError)
+        // Don't fail the entire booking if calendar fails
+      }
+
+      alert('Appointment booked successfully! The service provider will confirm your request.')
+      setShowBookingModal(false)
       setSelectedSeller(null)
-      alert('Appointment booked successfully! Both calendars have been updated.')
+      setBookingForm({
+        title: '',
+        description: '',
+        date: '',
+        time: '',
+        duration: 60
+      })
+      setAvailableSlots([])
+      loadAppointments() // Refresh appointments list
+
     } catch (error) {
-      console.error('Failed to book appointment:', error)
+      console.error('Error booking appointment:', error)
       alert('Failed to book appointment. Please try again.')
     } finally {
       setLoading(false)
     }
   }
 
-  const filteredSellers = sellers.filter(seller =>
-    seller.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    seller.specialties.some(specialty => specialty.toLowerCase().includes(searchTerm.toLowerCase()))
-  )
-
-  useEffect(() => {
-    // Load sellers list
-    setSellers(mockSellers)
-  }, [])
-
-  if (!isGoogleConnected) {
-    return (
-      <div className="space-y-6">
-        {/* Header Section */}
-        <div className="flex items-center gap-3 mb-6">
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center gap-3">
           <div className="p-3 bg-blue-100 rounded-xl">
             <svg className="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
             </svg>
           </div>
           <div>
-            <h2 className="text-xl font-semibold text-gray-800">Appointment Booking</h2>
-            <p className="text-sm text-gray-500">Connect your Google Calendar to book appointments</p>
+            <h2 className="text-xl font-semibold text-gray-800">Find & Book Appointments</h2>
+            <p className="text-sm text-gray-500">Browse service providers and book appointments</p>
           </div>
         </div>
-
-        {/* Google Sign-in Section */}
-        <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl p-8 border border-blue-100 text-center">
-          <div className="max-w-md mx-auto">
-            <div className="p-4 bg-white rounded-full w-20 h-20 mx-auto mb-4 flex items-center justify-center">
-              <svg className="w-10 h-10 text-blue-600" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
-                <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
-                <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
-                <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
-              </svg>
-            </div>
-            <h3 className="text-xl font-semibold text-gray-800 mb-2">Connect Google Calendar</h3>
-            <p className="text-gray-600 mb-6">Sign in with your Google account to book appointments and manage your schedule.</p>
-            <Button 
-              onClick={handleGoogleSignIn}
-              className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg font-medium"
-              size="lg"
-            >
-              <svg className="w-5 h-5 mr-2" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
-                <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
-                <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
-                <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
-              </svg>
-              Sign in with Google Calendar
-            </Button>
-          </div>
-        </div>
+        <Button onClick={loadSellers} disabled={loading} variant="outline">
+          {loading ? 'Loading...' : 'Refresh'}
+        </Button>
       </div>
-    )
-  }
 
-  if (booking) {
-    return (
-      <div className="space-y-6">
-        {/* Header Section */}
-        <div className="flex items-center gap-3 mb-6">
-          <div className="p-3 bg-blue-100 rounded-xl">
-            <svg className="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-          </div>
-          <div>
-            <h2 className="text-xl font-semibold text-gray-800">Confirm Booking</h2>
-            <p className="text-sm text-gray-500">Review your appointment details</p>
-          </div>
+      {/* Search and Sellers List */}
+      <div className="bg-white rounded-xl p-6 border border-gray-200 shadow-sm">
+        <h3 className="text-lg font-semibold text-gray-800 mb-4">Available Service Providers</h3>
+        <div className="mb-4">
+          <Input
+            type="text"
+            placeholder="Search by business name, location, or description..."
+            value={searchTerm}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearchTerm(e.target.value)}
+            className="w-full"
+          />
         </div>
+        
+        {loading ? (
+          <div className="text-center py-8">
+            <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+            <p className="mt-2 text-gray-500">Loading service providers...</p>
+          </div>
+        ) : filteredSellers.length > 0 ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {filteredSellers.map((seller) => (
+              <div key={seller.id} className="p-4 border border-gray-200 rounded-lg hover:shadow-md transition-shadow">
+                <h4 className="font-semibold text-gray-800">{seller.business_name}</h4>
+                <p className="text-sm text-gray-600 mb-2">{seller.user_profiles?.full_name}</p>
+                <p className="text-xs text-gray-500 mb-2">📍 {seller.location}</p>
+                <p className="text-sm text-gray-600 mb-3">{seller.description}</p>
+                <Button
+                  onClick={() => {
+                    setSelectedSeller(seller)
+                    setShowBookingModal(true)
+                    setAvailableSlots([]) // Clear previous availability
+                    setBookingForm({
+                      title: '',
+                      description: '',
+                      date: '',
+                      time: '',
+                      duration: 60
+                    })
+                  }}
+                  className="w-full bg-blue-600 hover:bg-blue-700 text-white"
+                  size="sm"
+                >
+                  Book Appointment
+                </Button>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-gray-500 text-center py-8">No service providers found</p>
+        )}
+      </div>
 
-        {/* Booking Confirmation */}
-        <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl p-6 border border-blue-100">
-          <div className="bg-white rounded-lg p-6 shadow-sm">
-            <h3 className="text-lg font-semibold mb-4">Appointment Details</h3>
+      {/* My Appointments */}
+      <div className="bg-white rounded-xl p-6 border border-gray-200 shadow-sm">
+        <h3 className="text-lg font-semibold text-gray-800 mb-4">My Appointments</h3>
+        {appointments.length > 0 ? (
+          <div className="space-y-3">
+            {appointments.map((appointment) => (
+              <div key={appointment.id} className="p-4 bg-gray-50 rounded-lg border-l-4 border-blue-500">
+                <div className="flex justify-between items-start">
+                  <div>
+                    <h5 className="font-medium text-sm">{appointment.title}</h5>
+                    <p className="text-xs text-gray-600 mt-1">
+                      with {appointment.sellers?.business_name || 'Unknown Provider'} at {appointment.sellers?.location || 'Unknown Location'}
+                    </p>
+                    <p className="text-xs text-gray-600">
+                      {new Date(appointment.start_time).toLocaleDateString()} at{' '}
+                      {new Date(appointment.start_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </p>
+                    {appointment.description && (
+                      <p className="text-xs text-gray-500 mt-1">{appointment.description}</p>
+                    )}
+                  </div>
+                  <span className={`text-xs px-2 py-1 rounded-full ${
+                    appointment.status === 'confirmed' ? 'bg-green-100 text-green-800' :
+                    appointment.status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
+                    appointment.status === 'cancelled' ? 'bg-red-100 text-red-800' :
+                    'bg-gray-100 text-gray-800'
+                  }`}>
+                    {appointment.status}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-gray-500 text-center py-8">No appointments scheduled</p>
+        )}
+      </div>
+
+      {/* Booking Modal */}
+      {showBookingModal && selectedSeller && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl p-6 w-full max-w-md mx-4">
+            <h3 className="text-lg font-semibold text-gray-800 mb-4">
+              Book with {selectedSeller.business_name}
+            </h3>
             
-            <div className="space-y-3 mb-6">
-              <div className="flex justify-between">
-                <span className="text-gray-600">Provider:</span>
-                <span className="font-medium">{booking.sellerName}</span>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Appointment Title *</label>
+                <Input
+                  type="text"
+                  value={bookingForm.title}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setBookingForm(prev => ({ ...prev, title: e.target.value }))}
+                  placeholder="e.g., Consultation, Meeting"
+                  className="w-full"
+                />
               </div>
-              <div className="flex justify-between">
-                <span className="text-gray-600">Date:</span>
-                <span className="font-medium">
-                  {new Date(booking.timeSlot.start).toLocaleDateString()}
-                </span>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+                <textarea
+                  value={bookingForm.description}
+                  onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setBookingForm(prev => ({ ...prev, description: e.target.value }))}
+                  placeholder="Brief description of what you need..."
+                  className="w-full p-2 border border-gray-300 rounded-lg h-20 resize-none"
+                />
               </div>
-              <div className="flex justify-between">
-                <span className="text-gray-600">Time:</span>
-                <span className="font-medium">
-                  {new Date(booking.timeSlot.start).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - 
-                  {new Date(booking.timeSlot.end).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                </span>
+              
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Date *</label>
+                  <Input
+                    type="date"
+                    value={bookingForm.date}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                      const newDate = e.target.value
+                      setBookingForm(prev => ({ ...prev, date: newDate, time: '' }))
+                      if (newDate && selectedSeller) {
+                        loadAvailability(selectedSeller.id, newDate)
+                      }
+                    }}
+                    min={new Date().toISOString().split('T')[0]}
+                    className="w-full"
+                  />
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Time *</label>
+                  <Input
+                    type="time"
+                    value={bookingForm.time}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setBookingForm(prev => ({ ...prev, time: e.target.value }))}
+                    className="w-full"
+                  />
+                </div>
               </div>
-            </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Duration</label>
+                <select
+                  value={bookingForm.duration}
+                  onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setBookingForm(prev => ({ ...prev, duration: parseInt(e.target.value) }))}
+                  className="w-full p-2 border border-gray-300 rounded-lg"
+                >
+                  <option value={30}>30 minutes</option>
+                  <option value={60}>1 hour</option>
+                  <option value={90}>1.5 hours</option>
+                  <option value={120}>2 hours</option>
+                </select>
+              </div>
 
-            <div className="mb-6">
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Notes (optional)
-              </label>
-              <textarea
-                value={booking.notes}
-                onChange={(e) => setBooking({...booking, notes: e.target.value})}
-                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                rows={3}
-                placeholder="Add any notes or details about the appointment..."
-              />
+              {/* Available Time Slots */}
+              {bookingForm.date && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Available Time Slots
+                    {loadingAvailability && <span className="text-blue-500 ml-2">Loading...</span>}
+                  </label>
+                  {loadingAvailability ? (
+                    <div className="text-center py-4 text-gray-500">Loading available times...</div>
+                  ) : availableSlots.length > 0 ? (
+                    <div className="grid grid-cols-3 gap-2 max-h-40 overflow-y-auto">
+                      {availableSlots.map((slot, index) => {
+                        const slotTime = new Date(slot.start).toLocaleTimeString([], { 
+                          hour: '2-digit', 
+                          minute: '2-digit',
+                          hour12: true 
+                        })
+                        const slotTimeValue = new Date(slot.start).toTimeString().slice(0, 5)
+                        
+                        return (
+                          <button
+                            key={index}
+                            onClick={() => setBookingForm(prev => ({ ...prev, time: slotTimeValue }))}
+                            className={`p-2 text-xs rounded border-2 transition-colors ${
+                              bookingForm.time === slotTimeValue
+                                ? 'border-blue-500 bg-blue-50 text-blue-700'
+                                : 'border-gray-200 bg-white text-gray-700 hover:border-blue-300 hover:bg-blue-50'
+                            }`}
+                          >
+                            {slotTime}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  ) : bookingForm.date ? (
+                    <div className="text-center py-4 text-gray-500 bg-gray-50 rounded-lg">
+                      No available slots for this date. Please choose another date.
+                    </div>
+                  ) : null}
+                </div>
+              )}
             </div>
-
-            <div className="flex gap-3">
-              <Button 
-                onClick={handleBookAppointment}
-                disabled={loading}
-                className="flex-1 bg-blue-600 hover:bg-blue-700"
-              >
-                {loading ? 'Booking...' : 'Confirm Booking'}
-              </Button>
-              <Button 
-                onClick={() => setBooking(null)}
+            
+            <div className="flex gap-3 mt-6">
+              <Button
+                onClick={() => {
+                  setShowBookingModal(false)
+                  setSelectedSeller(null)
+                }}
                 variant="outline"
                 className="flex-1"
               >
                 Cancel
               </Button>
-            </div>
-          </div>
-        </div>
-      </div>
-    )
-  }
-
-  if (selectedSeller) {
-    return (
-      <div className="space-y-6">
-        {/* Header Section */}
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex items-center gap-3">
-            <div className="p-3 bg-blue-100 rounded-xl">
-              <svg className="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-            </div>
-            <div>
-              <h2 className="text-xl font-semibold text-gray-800">Available Times</h2>
-              <p className="text-sm text-gray-500">Select a time slot with {selectedSeller.name}</p>
-            </div>
-          </div>
-          <Button onClick={() => setSelectedSeller(null)} variant="outline">
-            ← Back to Sellers
-          </Button>
-        </div>
-
-        {/* Available Slots */}
-        <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl p-6 border border-blue-100">
-          <div className="bg-white rounded-lg p-4 shadow-sm mb-4">
-            <h3 className="font-semibold text-gray-800 mb-2">{selectedSeller.name}</h3>
-            <p className="text-sm text-gray-600 mb-2">
-              Specialties: {selectedSeller.specialties.join(', ')}
-            </p>
-            <div className="flex items-center gap-1">
-              <span className="text-sm text-gray-600">Rating:</span>
-              <div className="flex items-center">
-                {[...Array(5)].map((_, i) => (
-                  <svg key={i} className={`w-4 h-4 ${i < Math.floor(selectedSeller.rating) ? 'text-yellow-400' : 'text-gray-300'}`} fill="currentColor" viewBox="0 0 20 20">
-                    <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
-                  </svg>
-                ))}
-                <span className="ml-1 text-sm text-gray-600">({selectedSeller.rating})</span>
-              </div>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-            {loading ? (
-              <div className="col-span-full text-center py-8">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-2"></div>
-                <p className="text-gray-600">Loading available times...</p>
-              </div>
-            ) : availableSlots.length > 0 ? availableSlots.slice(0, 16).map((slot, index) => (
               <Button
-                key={index}
-                onClick={() => setBooking({
-                  sellerId: selectedSeller.email,
-                  sellerName: selectedSeller.name,
-                  timeSlot: slot,
-                  notes: ''
-                })}
-                variant="outline"
-                className="p-3 text-sm hover:bg-blue-50 hover:border-blue-300"
+                onClick={handleBookAppointment}
+                disabled={loading}
+                className="flex-1 bg-blue-600 hover:bg-blue-700 text-white"
               >
-                <div>
-                  <div className="font-medium">
-                    {new Date(slot.start).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                  </div>
-                  <div className="text-xs text-gray-600">
-                    {new Date(slot.start).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                  </div>
-                </div>
+                {loading ? 'Booking...' : 'Book Appointment'}
               </Button>
-            )) : (
-              <div className="col-span-full text-center py-8">
-                <p className="text-gray-600">No available time slots found for the next 7 days.</p>
-                <Button onClick={() => loadAvailability(selectedSeller)} className="mt-2" variant="outline">
-                  Refresh Availability
-                </Button>
-              </div>
-            )}
+            </div>
           </div>
         </div>
-      </div>
-    )
-  }
-
-  return (
-    <div className="space-y-6">
-      {/* Header Section */}
-      <div className="flex items-center gap-3 mb-6">
-        <div className="p-3 bg-blue-100 rounded-xl">
-          <svg className="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-          </svg>
-        </div>
-        <div>
-          <h2 className="text-xl font-semibold text-gray-800">Find Service Providers</h2>
-          <p className="text-sm text-gray-500">Browse and book appointments with available providers</p>
-        </div>
-      </div>
-
-      {/* Search Section */}
-      <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl p-6 border border-blue-100">
-        <div className="mb-4">
-          <input
-            type="text"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            placeholder="Search by name or specialty..."
-            className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-          />
-        </div>
-
-        {/* Sellers List */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {filteredSellers.length > 0 ? filteredSellers.map(seller => (
-            <div key={seller.id} className="bg-white rounded-lg p-4 shadow-sm">
-              <div className="flex justify-between items-start mb-3">
-                <div>
-                  <h3 className="font-semibold text-gray-800">{seller.name}</h3>
-                  <p className="text-sm text-gray-600">{seller.specialties.join(', ')}</p>
-                </div>
-                <div className="flex items-center gap-1">
-                  <svg className="w-4 h-4 text-yellow-400" fill="currentColor" viewBox="0 0 20 20">
-                    <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
-                  </svg>
-                  <span className="text-sm text-gray-600">{seller.rating}</span>
-                </div>
-              </div>
-              
-              <div className="flex items-center gap-2 mb-3">
-                <div className={`w-2 h-2 rounded-full ${seller.isConnected ? 'bg-green-500' : 'bg-gray-400'}`}></div>
-                <span className={`text-xs ${seller.isConnected ? 'text-green-600' : 'text-gray-500'}`}>
-                  {seller.isConnected ? 'Available' : 'Not Available'}
-                </span>
-              </div>
-
-              <Button 
-                onClick={() => {
-                  setSelectedSeller(seller)
-                  loadAvailability(seller)
-                }}
-                disabled={!seller.isConnected}
-                className="w-full bg-blue-600 hover:bg-blue-700"
-                size="sm"
-              >
-                View Availability
-              </Button>
-            </div>
-          )) : (
-            <div className="col-span-full text-center py-8">
-              <p className="text-gray-600">No providers found matching your search.</p>
-            </div>
-          )}
-        </div>
-      </div>
+      )}
     </div>
   )
 }

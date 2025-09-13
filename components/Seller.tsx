@@ -16,6 +16,7 @@ interface SellerProfile {
 
 const Seller = ({ isGoogleConnected = false }: SellerProps) => {
   const [events, setEvents] = useState<CalendarEvent[]>([])
+  const [appointments, setAppointments] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
   const [sellerProfile, setSellerProfile] = useState<SellerProfile>({
     business_name: '',
@@ -27,6 +28,7 @@ const Seller = ({ isGoogleConnected = false }: SellerProps) => {
 
   useEffect(() => {
     loadSellerProfile()
+    loadAppointments()
   }, [])
 
   const loadSellerProfile = async () => {
@@ -50,6 +52,48 @@ const Seller = ({ isGoogleConnected = false }: SellerProps) => {
       }
     } catch (error) {
       console.error('Error loading seller profile:', error)
+    }
+  }
+
+  const loadAppointments = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+
+      // Get seller ID first
+      const { data: seller } = await supabase
+        .from('sellers')
+        .select('id')
+        .eq('user_id', user.id)
+        .single()
+
+      if (!seller) return
+
+      const { data, error } = await supabase
+        .from('appointments')
+        .select(`
+          id,
+          title,
+          description,
+          start_time,
+          end_time,
+          status,
+          buyer_email,
+          user_profiles!buyer_id (
+            full_name,
+            email
+          )
+        `)
+        .eq('seller_id', seller.id)
+        .order('start_time', { ascending: true })
+
+      if (error) {
+        console.error('Error loading appointments:', error)
+      } else {
+        setAppointments(data || [])
+      }
+    } catch (error) {
+      console.error('Error loading appointments:', error)
     }
   }
 
@@ -101,6 +145,94 @@ const Seller = ({ isGoogleConnected = false }: SellerProps) => {
       console.error('Failed to load calendar data:', error)
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleAcceptAppointment = async (appointmentId: string) => {
+    try {
+      const { error } = await supabase
+        .from('appointments')
+        .update({ 
+          status: 'confirmed',
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', appointmentId)
+
+      if (error) {
+        console.error('Error accepting appointment:', error)
+        alert('Failed to accept appointment. Please try again.')
+        return
+      }
+
+      // Find the appointment details for calendar event
+      const appointment = appointments.find(apt => apt.id === appointmentId)
+      if (appointment) {
+        try {
+          // Create Google Calendar event (using mock for now)
+          const eventResponse = await fetch('/api/calendar/create-event', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              summary: `${appointment.title} - Confirmed`,
+              description: appointment.description || `Confirmed appointment`,
+              start: appointment.start_time,
+              end: appointment.end_time,
+              attendees: [appointment.buyer_email, appointment.seller_email].filter(Boolean)
+            })
+          })
+
+          if (eventResponse.ok) {
+            const eventData = await eventResponse.json()
+            console.log('Calendar event created for accepted appointment:', eventData)
+            
+            // Update appointment with calendar event data
+            await supabase
+              .from('appointments')
+              .update({ 
+                google_event_id: eventData.id,
+                google_meet_link: eventData.meetLink 
+              })
+              .eq('id', appointmentId)
+          }
+        } catch (calendarError) {
+          console.error('Calendar event creation failed:', calendarError)
+          // Don't fail the acceptance if calendar fails
+        }
+      }
+
+      // Reload appointments to reflect the change
+      loadAppointments()
+      alert('Appointment accepted successfully! Calendar event has been created.')
+    } catch (error) {
+      console.error('Error accepting appointment:', error)
+      alert('Failed to accept appointment. Please try again.')
+    }
+  }
+
+  const handleDeclineAppointment = async (appointmentId: string) => {
+    try {
+      const { error } = await supabase
+        .from('appointments')
+        .update({ 
+          status: 'cancelled',
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', appointmentId)
+
+      if (error) {
+        console.error('Error declining appointment:', error)
+        alert('Failed to decline appointment. Please try again.')
+        return
+      }
+
+      // Reload appointments to reflect the change
+      loadAppointments()
+      alert('Appointment declined.')
+    } catch (error) {
+      console.error('Error declining appointment:', error)
+      alert('Failed to decline appointment. Please try again.')
     }
   }
 
@@ -317,6 +449,71 @@ const Seller = ({ isGoogleConnected = false }: SellerProps) => {
             </div>
           </div>
         </div>
+      </div>
+
+      {/* Buyer Appointments Section */}
+      <div className="bg-white rounded-xl p-6 border border-gray-200 shadow-sm">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-semibold text-gray-800">Appointment Requests</h3>
+          <Button onClick={loadAppointments} disabled={loading} variant="outline" size="sm">
+            {loading ? 'Loading...' : 'Refresh'}
+          </Button>
+        </div>
+        
+        {appointments.length > 0 ? (
+          <div className="space-y-3">
+            {appointments.map((appointment: any) => (
+              <div key={appointment.id} className="p-4 bg-gray-50 rounded-lg border-l-4 border-blue-500">
+                <div className="flex justify-between items-start">
+                  <div>
+                    <h5 className="font-medium text-sm">{appointment.title}</h5>
+                    <p className="text-xs text-gray-600 mt-1">
+                      Requested by {appointment.user_profiles?.[0]?.full_name || appointment.buyer_email}
+                    </p>
+                    <p className="text-xs text-gray-600">
+                      {new Date(appointment.start_time).toLocaleDateString()} at{' '}
+                      {new Date(appointment.start_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </p>
+                    {appointment.description && (
+                      <p className="text-xs text-gray-500 mt-1">{appointment.description}</p>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className={`text-xs px-2 py-1 rounded-full ${
+                      appointment.status === 'confirmed' ? 'bg-green-100 text-green-800' :
+                      appointment.status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
+                      appointment.status === 'cancelled' ? 'bg-red-100 text-red-800' :
+                      'bg-gray-100 text-gray-800'
+                    }`}>
+                      {appointment.status}
+                    </span>
+                    {appointment.status === 'pending' && (
+                      <div className="flex gap-1">
+                        <Button 
+                          size="sm" 
+                          className="h-7 px-2 bg-green-600 hover:bg-green-700 text-white text-xs"
+                          onClick={() => handleAcceptAppointment(appointment.id)}
+                        >
+                          Accept
+                        </Button>
+                        <Button 
+                          size="sm" 
+                          variant="outline" 
+                          className="h-7 px-2 text-xs"
+                          onClick={() => handleDeclineAppointment(appointment.id)}
+                        >
+                          Decline
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-gray-500 text-center py-8">No appointment requests</p>
+        )}
       </div>
 
       <div className="bg-white rounded-xl p-6 border border-gray-200 shadow-sm">

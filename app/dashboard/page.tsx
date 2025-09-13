@@ -9,6 +9,7 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import Buyer from '@/components/Buyer'
 import Seller from '@/components/Seller'
+import Appointments from '@/components/Appointments'
 import { handleSignOut } from '../actions/auth/route'
 import { Button } from '@/components/ui/button'
 
@@ -16,6 +17,11 @@ export default function Dashboard() {
   const router = useRouter()
   const [user, setUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(true)
+  const [googleTokens, setGoogleTokens] = useState<{
+    buyer?: any;
+    seller?: any;
+  }>({})
+  const [isGoogleConnected, setIsGoogleConnected] = useState(false)
 
   useEffect(() => {
     const getUser = async () => {
@@ -23,14 +29,90 @@ export default function Dashboard() {
 
       if (session) {
         setUser(session.user)
-      } else {
-        router.push('/login')
-      }
-      setLoading(false)
-    }
+        
+        // Check for Google Calendar connection status from database
+        const checkGoogleConnection = async () => {
+          try {
+            const response = await fetch('/api/store-tokens');
+            if (response.ok) {
+              const data = await response.json();
+              setIsGoogleConnected(data.connected);
+              
+              if (data.connected && data.tokens) {
+                // Store tokens in localStorage for client-side usage
+                localStorage.setItem('google_calendar_tokens', JSON.stringify(data.tokens));
+                
+                // Set both buyer and seller as connected (unified approach)
+                setGoogleTokens({
+                  buyer: data.tokens,
+                  seller: data.tokens
+                });
+              }
+            }
+          } catch (error) {
+            console.error('Error checking Google connection:', error);
+          }
+        };
 
-    getUser()
-  }, [router])
+        // Check URL parameters for immediate feedback from OAuth callback
+        const urlParams = new URLSearchParams(window.location.search);
+        const googleConnected = urlParams.get('google_connected');
+        const userType = urlParams.get('user_type') as 'buyer' | 'seller';
+        const tokens = urlParams.get('tokens');
+        
+        if (googleConnected === 'true') {
+          setIsGoogleConnected(true);
+          
+          // If tokens are provided in URL (fallback method)
+          if (tokens) {
+            try {
+              const tokenData = JSON.parse(decodeURIComponent(tokens));
+              
+              // Store in state
+              setGoogleTokens(prev => ({
+                ...prev,
+                [userType]: tokenData
+              }));
+              
+              // Store in localStorage for persistence
+              localStorage.setItem(`google_tokens_${userType}`, JSON.stringify(tokenData));
+            } catch (error) {
+              console.error('Error parsing tokens from URL:', error);
+            }
+          } else {
+            // If no tokens in URL, check database
+            await checkGoogleConnection();
+          }
+
+          // Clean up URL parameters
+          window.history.replaceState({}, '', '/dashboard');
+        } else {
+          // Check database for existing connection
+          await checkGoogleConnection();
+          
+          // Also check localStorage for backward compatibility
+          const buyerTokens = localStorage.getItem('google_tokens_buyer');
+          const sellerTokens = localStorage.getItem('google_tokens_seller');
+          
+          if (buyerTokens || sellerTokens) {
+            setGoogleTokens({
+              buyer: buyerTokens ? JSON.parse(buyerTokens) : null,
+              seller: sellerTokens ? JSON.parse(sellerTokens) : null
+            });
+            
+            if (buyerTokens || sellerTokens) {
+              setIsGoogleConnected(true);
+            }
+          }
+        }
+      } else {
+        router.push('/login');
+      }
+      setLoading(false);
+    };
+
+    getUser();
+  }, [router]);
 
   const handleSignOut = async () => {
     await supabase.auth.signOut()
@@ -84,7 +166,7 @@ return (
           {/* Welcome Section */}
           <div className="mb-8">
             <h1 className="text-3xl font-bold text-gray-800 mb-2">Welcome back, {userName}! 👋</h1>
-            <p className="text-gray-600">Manage your marketplace activities with ease</p>
+            <p className="text-gray-600">Manage your calendar and appointments with ease</p>
           </div>
 
           {/* Enhanced Tabs Section */}
@@ -96,24 +178,34 @@ return (
                     value="Buyer" 
                     className="data-[state=active]:bg-white data-[state=active]:text-green-600 data-[state=active]:shadow-sm text-yellow-400 font-medium px-6 py-2 rounded-lg transition-all duration-200"
                   >
-                    🛒 Buyer Dashboard
+                    🛒 Book Appointments
                   </TabsTrigger>
                   <TabsTrigger 
                     value="Seller" 
                     className="data-[state=active]:bg-white data-[state=active]:text-green-600 data-[state=active]:shadow-sm text-yellow-400 font-medium px-6 py-2 rounded-lg transition-all duration-200"
                   >
-                    🏪 Seller Dashboard
+                    🏪 Manage Calendar
+                  </TabsTrigger>
+                  <TabsTrigger 
+                    value="Appointments" 
+                    className="data-[state=active]:bg-white data-[state=active]:text-green-600 data-[state=active]:shadow-sm text-yellow-400 font-medium px-6 py-2 rounded-lg transition-all duration-200"
+                  >
+                    📅 My Appointments
                   </TabsTrigger>
                 </TabsList>
               </div>
 
               <div className="p-8">
                 <TabsContent value="Buyer" className="mt-0">
-                  <Buyer />
+                  <Buyer isGoogleConnected={isGoogleConnected || !!googleTokens.buyer} />
                 </TabsContent>
 
                 <TabsContent value="Seller" className="mt-0">
-                  <Seller />
+                  <Seller isGoogleConnected={isGoogleConnected || !!googleTokens.seller} />
+                </TabsContent>
+
+                <TabsContent value="Appointments" className="mt-0">
+                  <Appointments />
                 </TabsContent>
               </div>
             </Tabs>

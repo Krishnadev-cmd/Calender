@@ -10,12 +10,20 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import Buyer from '@/components/Buyer'
 import Seller from '@/components/Seller'
 import Appointments from '@/components/Appointments'
+import RoleSelection from '@/components/RoleSelection'
 import { handleSignOut } from '../actions/auth/route'
 import { Button } from '@/components/ui/button'
+
+interface UserProfile {
+  role: 'buyer' | 'seller' | null;
+  full_name: string | null;
+  avatar_url: string | null;
+}
 
 export default function Dashboard() {
   const router = useRouter()
   const [user, setUser] = useState<User | null>(null)
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null)
   const [loading, setLoading] = useState(true)
   const [googleTokens, setGoogleTokens] = useState<{
     buyer?: any;
@@ -29,6 +37,28 @@ export default function Dashboard() {
 
       if (session) {
         setUser(session.user)
+        
+        // Get user profile and role
+        const { data: profile, error } = await supabase
+          .from('user_profiles')
+          .select('role, full_name, email')
+          .eq('id', session.user.id)
+          .single()
+
+        if (error) {
+          if (error.code === 'PGRST116') {
+            // User profile doesn't exist, this is a new user
+            console.log('New user detected, profile will be created during role selection');
+            setUserProfile(null);
+          } else {
+            console.error('Error fetching user profile:', error);
+          }
+        } else {
+          setUserProfile({
+            ...profile,
+            avatar_url: null // Add default avatar_url
+          })
+        }
         
         // Check for Google Calendar connection status from database
         const checkGoogleConnection = async () => {
@@ -114,6 +144,10 @@ export default function Dashboard() {
     getUser();
   }, [router]);
 
+  const handleRoleSelected = (role: 'buyer' | 'seller') => {
+    setUserProfile(prev => prev ? { ...prev, role } : { role, full_name: null, avatar_url: null });
+  };
+
   const handleSignOut = async () => {
     await supabase.auth.signOut()
     router.push('/login')
@@ -134,9 +168,14 @@ export default function Dashboard() {
     return <div>Redirecting to login...</div>
   }
 
-    const userName = user.user_metadata?.full_name || user.user_metadata?.name || user.email?.split('@')[0] || 'User'
-    const userAvatar = user.user_metadata?.avatar_url || user.user_metadata?.picture
-    const userEmail = user.email
+  // Show role selection if user hasn't chosen a role yet
+  if (!userProfile?.role) {
+    return <RoleSelection userId={user.id} onRoleSelected={handleRoleSelected} />
+  }
+
+  const userName = userProfile.full_name || user.user_metadata?.full_name || user.user_metadata?.name || user.email?.split('@')[0] || 'User'
+  const userAvatar = userProfile.avatar_url || user.user_metadata?.avatar_url || user.user_metadata?.picture
+  const userEmail = user.email
 
 return (
     <div className='flex flex-col flex-1'>
@@ -166,49 +205,77 @@ return (
           {/* Welcome Section */}
           <div className="mb-8">
             <h1 className="text-3xl font-bold text-gray-800 mb-2">Welcome back, {userName}! 👋</h1>
-            <p className="text-gray-600">Manage your calendar and appointments with ease</p>
+            <p className="text-gray-600">
+              {userProfile.role === 'buyer' 
+                ? 'Find and book appointments with service providers' 
+                : 'Manage your calendar and availability for clients'
+              }
+            </p>
           </div>
 
-          {/* Enhanced Tabs Section */}
+          {/* Role-based Content */}
           <div className="bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden">
-            <Tabs defaultValue="Buyer" className="w-full">
-              <div className="bg-gradient-to-r from-green-500 to-emerald-500 px-6 py-4">
-                <TabsList className="bg-white/20 backdrop-blur-sm border-0 rounded-xl p-1">
-                  <TabsTrigger 
-                    value="Buyer" 
-                    className="data-[state=active]:bg-white data-[state=active]:text-green-600 data-[state=active]:shadow-sm text-yellow-400 font-medium px-6 py-2 rounded-lg transition-all duration-200"
-                  >
-                    🛒 Book Appointments
-                  </TabsTrigger>
-                  <TabsTrigger 
-                    value="Seller" 
-                    className="data-[state=active]:bg-white data-[state=active]:text-green-600 data-[state=active]:shadow-sm text-yellow-400 font-medium px-6 py-2 rounded-lg transition-all duration-200"
-                  >
-                    🏪 Manage Calendar
-                  </TabsTrigger>
-                  <TabsTrigger 
-                    value="Appointments" 
-                    className="data-[state=active]:bg-white data-[state=active]:text-green-600 data-[state=active]:shadow-sm text-yellow-400 font-medium px-6 py-2 rounded-lg transition-all duration-200"
-                  >
-                    📅 My Appointments
-                  </TabsTrigger>
-                </TabsList>
-              </div>
+            {userProfile.role === 'buyer' ? (
+              // Buyer Dashboard
+              <Tabs defaultValue="BookAppointments" className="w-full">
+                <div className="bg-gradient-to-r from-blue-500 to-cyan-500 px-6 py-4">
+                  <TabsList className="bg-white/20 backdrop-blur-sm border-0 rounded-xl p-1">
+                    <TabsTrigger 
+                      value="BookAppointments" 
+                      className="data-[state=active]:bg-white data-[state=active]:text-blue-600 data-[state=active]:shadow-sm text-white font-medium px-6 py-2 rounded-lg transition-all duration-200"
+                    >
+                      🛒 Book Appointments
+                    </TabsTrigger>
+                    <TabsTrigger 
+                      value="MyAppointments" 
+                      className="data-[state=active]:bg-white data-[state=active]:text-blue-600 data-[state=active]:shadow-sm text-white font-medium px-6 py-2 rounded-lg transition-all duration-200"
+                    >
+                      � My Appointments
+                    </TabsTrigger>
+                  </TabsList>
+                </div>
 
-              <div className="p-8">
-                <TabsContent value="Buyer" className="mt-0">
-                  <Buyer isGoogleConnected={isGoogleConnected || !!googleTokens.buyer} />
-                </TabsContent>
+                <div className="p-8">
+                  <TabsContent value="BookAppointments" className="mt-0">
+                    <Buyer isGoogleConnected={isGoogleConnected || !!googleTokens.buyer} />
+                  </TabsContent>
 
-                <TabsContent value="Seller" className="mt-0">
-                  <Seller isGoogleConnected={isGoogleConnected || !!googleTokens.seller} />
-                </TabsContent>
+                  <TabsContent value="MyAppointments" className="mt-0">
+                    <Appointments />
+                  </TabsContent>
+                </div>
+              </Tabs>
+            ) : (
+              // Seller Dashboard
+              <Tabs defaultValue="ManageCalendar" className="w-full">
+                <div className="bg-gradient-to-r from-green-500 to-emerald-500 px-6 py-4">
+                  <TabsList className="bg-white/20 backdrop-blur-sm border-0 rounded-xl p-1">
+                    <TabsTrigger 
+                      value="ManageCalendar" 
+                      className="data-[state=active]:bg-white data-[state=active]:text-green-600 data-[state=active]:shadow-sm text-white font-medium px-6 py-2 rounded-lg transition-all duration-200"
+                    >
+                      🏪 Manage Calendar
+                    </TabsTrigger>
+                    <TabsTrigger 
+                      value="Appointments" 
+                      className="data-[state=active]:bg-white data-[state=active]:text-green-600 data-[state=active]:shadow-sm text-white font-medium px-6 py-2 rounded-lg transition-all duration-200"
+                    >
+                      📅 Appointments
+                    </TabsTrigger>
+                  </TabsList>
+                </div>
 
-                <TabsContent value="Appointments" className="mt-0">
-                  <Appointments />
-                </TabsContent>
-              </div>
-            </Tabs>
+                <div className="p-8">
+                  <TabsContent value="ManageCalendar" className="mt-0">
+                    <Seller isGoogleConnected={isGoogleConnected || !!googleTokens.seller} />
+                  </TabsContent>
+
+                  <TabsContent value="Appointments" className="mt-0">
+                    <Appointments />
+                  </TabsContent>
+                </div>
+              </Tabs>
+            )}
           </div>
         </div>
       </div>

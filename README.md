@@ -204,6 +204,23 @@ npm run build
 npm start
 ```
 
+## 🌐 Deployment to Vercel
+
+This app is optimized for deployment on Vercel. For detailed deployment instructions, see [DEPLOYMENT.md](./DEPLOYMENT.md).
+
+### Quick Deploy
+
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/your-username/calender)
+
+**Key steps:**
+1. Push your code to GitHub
+2. Connect to Vercel and import your repository
+3. Add environment variables in Vercel dashboard
+4. Update Google OAuth redirect URIs with your Vercel domain
+5. Update Supabase settings with your production URL
+
+For complete setup instructions, see [DEPLOYMENT.md](./DEPLOYMENT.md).
+
 ## 📱 Usage Guide
 
 ### Getting Started as a User

@@ -186,10 +186,18 @@ const Seller = ({ user, isGoogleConnected = false }: SellerProps) => {
 
   if (!isGoogleConnected) {
     return (
-      <div className="text-center p-8">
-        <h3 className="text-lg font-semibold mb-4">Connect Your Google Calendar</h3>
-        <p className="mb-4">To manage appointments and availability, please connect your Google Calendar first.</p>
-        <Button onClick={() => window.location.href = '/api/auth/google?state=seller'}>
+      <div className="text-center p-8 bg-white rounded-lg shadow-sm">
+        <div className="mb-6">
+          <div className="w-16 h-16 mx-auto mb-4 bg-orange-100 rounded-full flex items-center justify-center">
+            <span className="text-2xl">📅</span>
+          </div>
+          <h3 className="text-xl font-semibold text-gray-800 mb-2">Connect Your Google Calendar</h3>
+          <p className="text-gray-600 mb-6">To manage appointments and availability, please connect your Google Calendar first.</p>
+        </div>
+        <Button 
+          onClick={() => window.location.href = '/api/auth/google?state=seller'}
+          className="bg-orange-600 hover:bg-orange-700 text-white px-8 py-3 text-lg font-medium"
+        >
           Connect Google Calendar
         </Button>
       </div>
@@ -198,22 +206,25 @@ const Seller = ({ user, isGoogleConnected = false }: SellerProps) => {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-12">
+      <div className="flex items-center justify-center py-16">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p>Loading seller dashboard...</p>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-orange-600 mx-auto mb-4"></div>
+          <p className="text-gray-700 font-medium">Loading seller dashboard...</p>
         </div>
       </div>
     )
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h2 className="text-2xl font-bold">Seller Dashboard</h2>
-        <div className="flex space-x-2">
-          <Button onClick={loadSellerData} variant="outline">
-            Refresh
+    <div className="space-y-8">
+      <div className="flex justify-between items-center border-b border-gray-200 pb-4">
+        <div>
+          <h2 className="text-3xl font-bold text-gray-800">Seller Dashboard</h2>
+          <p className="text-gray-600 mt-1">Manage your business profile and appointments</p>
+        </div>
+        <div className="flex space-x-3">
+          <Button onClick={loadSellerData} variant="outline" className="text-gray-600 border-gray-300">
+            🔄 Refresh
           </Button>
         </div>
       </div>

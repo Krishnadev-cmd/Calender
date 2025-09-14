@@ -6,10 +6,8 @@ import { useRouter } from 'next/navigation'
 import supabase from '@/lib/supabase'
 import { User } from '@supabase/supabase-js'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import Buyer from '@/components/Buyer'
 import Seller from '@/components/Seller'
-import Appointments from '@/components/Appointments'
 import RoleSelection from '@/components/RoleSelection'
 import { handleSignOut } from '../actions/auth/route'
 import { Button } from '@/components/ui/button'
@@ -165,10 +163,10 @@ export default function Dashboard() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
-          <p className="mt-4 text-gray-600">Loading...</p>
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-blue-50">
+        <div className="text-center bg-white p-8 rounded-xl shadow-lg">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p className="mt-4 text-gray-700 font-medium">Loading your dashboard...</p>
         </div>
       </div>
     )
@@ -189,23 +187,23 @@ export default function Dashboard() {
 
 return (
     <div className='flex flex-col flex-1'>
-      <div className='flex flex-row justify-between items-center h-20 w-full bg-green-500 px-6'>
+      <div className='flex flex-row justify-between items-center h-20 w-full bg-gradient-to-r from-slate-800 to-gray-900 px-6 shadow-lg'>
         {/* Left side - Dashboard title */}
         <div>        
-          <p className="text-white font-semibold text-xl">Dashboard</p>
+          <p className="text-white font-bold text-xl">Dashboard</p>
         </div>
 
         {/* Right side - Username and Avatar */}
         <div className="flex items-center gap-3 ml-250">
-          <p className="text-white">Welcome, {userName}</p>
+          <p className="text-gray-200 font-medium">Welcome, {userName}</p>
           <Avatar>
             <AvatarImage src={userAvatar} />
-            <AvatarFallback>{userName?.charAt(0).toUpperCase()}</AvatarFallback>
+            <AvatarFallback className="bg-blue-600 text-white font-bold">{userName?.charAt(0).toUpperCase()}</AvatarFallback>
           </Avatar>
         
         </div>
       <div>
-        <Button onClick={handleSignOut} className='bg-red-500 hover:bg-red-600 text-white'>Sign Out</Button>
+        <Button onClick={handleSignOut} className='bg-red-600 hover:bg-red-700 text-white font-medium transition-colors duration-200 shadow-md'>Sign Out</Button>
       </div>
       </div>
       
@@ -214,8 +212,8 @@ return (
         <div className="max-w-6xl mx-auto">
           {/* Welcome Section */}
           <div className="mb-8">
-            <h1 className="text-3xl font-bold text-gray-800 mb-2">Welcome back, {userName}! 👋</h1>
-            <p className="text-gray-600">
+            <h1 className="text-3xl font-bold text-gray-900 mb-2">Welcome back, {userName}! 👋</h1>
+            <p className="text-gray-700 text-lg">
               {userProfile.role === 'buyer' 
                 ? 'Find and book appointments with service providers' 
                 : 'Manage your calendar and availability for clients'
@@ -227,64 +225,30 @@ return (
           <div className="bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden">
             {userProfile.role === 'buyer' ? (
               // Buyer Dashboard
-              <Tabs defaultValue="BookAppointments" className="w-full">
+              <div className="w-full">
                 <div className="bg-gradient-to-r from-blue-500 to-cyan-500 px-6 py-4">
-                  <TabsList className="bg-white/20 backdrop-blur-sm border-0 rounded-xl p-1">
-                    <TabsTrigger 
-                      value="BookAppointments" 
-                      className="data-[state=active]:bg-white data-[state=active]:text-blue-600 data-[state=active]:shadow-sm text-white font-medium px-6 py-2 rounded-lg transition-all duration-200"
-                    >
-                      🛒 Book Appointments
-                    </TabsTrigger>
-                    <TabsTrigger 
-                      value="MyAppointments" 
-                      className="data-[state=active]:bg-white data-[state=active]:text-blue-600 data-[state=active]:shadow-sm text-white font-medium px-6 py-2 rounded-lg transition-all duration-200"
-                    >
-                      � My Appointments
-                    </TabsTrigger>
-                  </TabsList>
+                  <h2 className="text-white font-bold text-xl flex items-center gap-2">
+                    🛒 Book Appointments
+                  </h2>
                 </div>
 
                 <div className="p-8">
-                  <TabsContent value="BookAppointments" className="mt-0">
-                    <Buyer user={user} isGoogleConnected={isGoogleConnected || !!googleTokens.buyer} />
-                  </TabsContent>
-
-                  <TabsContent value="MyAppointments" className="mt-0">
-                    <Appointments user={user} userRole={userProfile?.role} />
-                  </TabsContent>
+                  <Buyer user={user} isGoogleConnected={isGoogleConnected || !!googleTokens.buyer} />
                 </div>
-              </Tabs>
+              </div>
             ) : (
               // Seller Dashboard
-              <Tabs defaultValue="ManageCalendar" className="w-full">
+              <div className="w-full">
                 <div className="bg-gradient-to-r from-green-500 to-emerald-500 px-6 py-4">
-                  <TabsList className="bg-white/20 backdrop-blur-sm border-0 rounded-xl p-1">
-                    <TabsTrigger 
-                      value="ManageCalendar" 
-                      className="data-[state=active]:bg-white data-[state=active]:text-green-600 data-[state=active]:shadow-sm text-white font-medium px-6 py-2 rounded-lg transition-all duration-200"
-                    >
-                      🏪 Manage Calendar
-                    </TabsTrigger>
-                    <TabsTrigger 
-                      value="Appointments" 
-                      className="data-[state=active]:bg-white data-[state=active]:text-green-600 data-[state=active]:shadow-sm text-white font-medium px-6 py-2 rounded-lg transition-all duration-200"
-                    >
-                      📅 Appointments
-                    </TabsTrigger>
-                  </TabsList>
+                  <h2 className="text-white font-bold text-xl flex items-center gap-2">
+                    🏪 Manage Calendar
+                  </h2>
                 </div>
 
                 <div className="p-8">
-                  <TabsContent value="ManageCalendar" className="mt-0">
-                    <Seller user={user} isGoogleConnected={isGoogleConnected || !!googleTokens.seller} />
-                  </TabsContent>
-
-                  <TabsContent value="Appointments" className="mt-0">
-                    <Appointments user={user} userRole={userProfile?.role} />
-                  </TabsContent>
+                  <Seller user={user} isGoogleConnected={isGoogleConnected || !!googleTokens.seller} />
                 </div>
-              </Tabs>
+              </div>
             )}
           </div>
         </div>

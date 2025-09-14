@@ -61,7 +61,6 @@ const Buyer = ({ user, isGoogleConnected = false }: BuyerProps) => {
 
       if (response.ok) {
         const result = await response.json()
-        console.log('Sellers API result:', result)
         
         // Transform the sellers data to match our interface
         const transformedSellers = result.sellers?.map((seller: any) => ({
@@ -146,16 +145,6 @@ const Buyer = ({ user, isGoogleConnected = false }: BuyerProps) => {
 
     try {
       setLoading(true)
-      console.log('Booking appointment:', {
-        buyer_id: user.id,
-        seller_id: selectedSeller.id,
-        title: appointmentDetails.title,
-        description: appointmentDetails.description,
-        start_time: selectedSlot.start,
-        end_time: selectedSlot.end,
-        buyer_email: user.email,
-        seller_email: selectedSeller.user_profiles?.email
-      })
 
       const response = await fetch('/api/appointments', {
         method: 'POST',
@@ -189,7 +178,6 @@ const Buyer = ({ user, isGoogleConnected = false }: BuyerProps) => {
             successMessage += ' Calendar event created for one party. The other may need to manually add the event.'
           } else if (errors && errors.length > 0) {
             successMessage += ' Note: Calendar events could not be created automatically. Please add manually to your calendar.'
-            console.warn('Calendar errors:', errors)
           }
         }
         
@@ -234,10 +222,18 @@ const Buyer = ({ user, isGoogleConnected = false }: BuyerProps) => {
 
   if (!isGoogleConnected) {
     return (
-      <div className="text-center p-8">
-        <h3 className="text-lg font-semibold mb-4">Connect Your Google Calendar</h3>
-        <p className="mb-4">To book appointments, please connect your Google Calendar first.</p>
-        <Button onClick={() => window.location.href = '/api/auth/google?state=buyer'}>
+      <div className="text-center p-8 bg-white rounded-lg shadow-sm">
+        <div className="mb-6">
+          <div className="w-16 h-16 mx-auto mb-4 bg-blue-100 rounded-full flex items-center justify-center">
+            <span className="text-2xl">📅</span>
+          </div>
+          <h3 className="text-xl font-semibold text-gray-800 mb-2">Connect Your Google Calendar</h3>
+          <p className="text-gray-600 mb-6">To book appointments, please connect your Google Calendar first.</p>
+        </div>
+        <Button 
+          onClick={() => window.location.href = '/api/auth/google?state=buyer'}
+          className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 text-lg font-medium"
+        >
           Connect Google Calendar
         </Button>
       </div>
@@ -245,9 +241,12 @@ const Buyer = ({ user, isGoogleConnected = false }: BuyerProps) => {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h2 className="text-2xl font-bold">Book an Appointment</h2>
+    <div className="space-y-8">
+      <div className="flex justify-between items-center border-b border-gray-200 pb-4">
+        <div>
+          <h2 className="text-3xl font-bold text-gray-800">Book an Appointment</h2>
+          <p className="text-gray-600 mt-1">Find and schedule meetings with service providers</p>
+        </div>
         {selectedSeller && (
           <Button 
             variant="outline" 
@@ -255,54 +254,69 @@ const Buyer = ({ user, isGoogleConnected = false }: BuyerProps) => {
               setSelectedSeller(null)
               setSelectedSlot(null)
             }}
+            className="border-gray-300 text-gray-700 hover:bg-gray-50"
           >
-            Back to Sellers
+            ← Back to Sellers
           </Button>
         )}
       </div>
 
       {!selectedSeller ? (
         // Sellers List View
-        <div>
-          <h3 className="text-lg font-semibold mb-4">Available Service Providers</h3>
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+          <div className="flex justify-between items-center mb-6">
+            <h3 className="text-xl font-semibold text-gray-800">Available Service Providers</h3>
+            <Button onClick={fetchSellers} variant="outline" size="sm" className="text-gray-600">
+              🔄 Refresh
+            </Button>
+          </div>
           {loading ? (
-            <div className="text-center py-8">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
-              <p>Loading sellers...</p>
+            <div className="text-center py-12">
+              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+              <p className="text-gray-600 font-medium">Loading sellers...</p>
             </div>
           ) : sellers.length === 0 ? (
-            <div className="text-center py-8 text-gray-500">
-              <p className="mb-4">No sellers available at the moment</p>
-              <Button onClick={fetchSellers} variant="outline">
-                Refresh
+            <div className="text-center py-12">
+              <div className="w-16 h-16 mx-auto mb-4 bg-gray-100 rounded-full flex items-center justify-center">
+                <span className="text-2xl text-gray-400">👥</span>
+              </div>
+              <p className="text-gray-600 mb-4 font-medium">No sellers available at the moment</p>
+              <Button onClick={fetchSellers} variant="outline" className="text-gray-600">
+                Try Again
               </Button>
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {sellers.map((seller) => (
-                <Card key={seller.id} className="cursor-pointer hover:shadow-lg transition-shadow">
-                  <CardHeader>
-                    <div className="flex items-center justify-between">
-                      <CardTitle className="text-lg">{seller.business_name}</CardTitle>
-                      <div className="flex items-center gap-2">
+                <Card key={seller.id} className="hover:shadow-lg transition-all duration-200 border border-gray-200 hover:border-blue-300">
+                  <CardHeader className="pb-3">
+                    <div className="flex items-start justify-between">
+                      <CardTitle className="text-lg font-semibold text-gray-800 leading-tight">
+                        {seller.business_name}
+                      </CardTitle>
+                      <div className="flex flex-col gap-1">
                         {seller.hasGoogleCalendar && (
-                          <span className="text-xs bg-green-100 text-green-800 px-2 py-1 rounded">
+                          <span className="text-xs bg-green-50 text-green-700 px-2 py-1 rounded-full border border-green-200 font-medium">
                             📅 Calendar
                           </span>
                         )}
                         {seller.isOnline && (
-                          <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">
+                          <span className="text-xs bg-blue-50 text-blue-700 px-2 py-1 rounded-full border border-blue-200 font-medium">
                             🟢 Online
                           </span>
                         )}
                       </div>
                     </div>
-                    <CardDescription>{seller.description}</CardDescription>
+                    <CardDescription className="text-gray-600 mt-2 line-clamp-2">
+                      {seller.description}
+                    </CardDescription>
                     {seller.location && (
-                      <p className="text-sm text-gray-500">📍 {seller.location}</p>
+                      <p className="text-sm text-gray-500 mt-2 flex items-center">
+                        📍 {seller.location}
+                      </p>
                     )}
                   </CardHeader>
-                  <CardContent>
+                  <CardContent className="pt-0">
                     <div className="flex justify-between items-center">
                       <div className="text-sm text-gray-600">
                         {seller.user_profiles?.email || 'Email not available'}
@@ -310,6 +324,10 @@ const Buyer = ({ user, isGoogleConnected = false }: BuyerProps) => {
                       <Button 
                         onClick={() => setSelectedSeller(seller)}
                         disabled={!seller.hasGoogleCalendar}
+                        className={seller.hasGoogleCalendar 
+                          ? "bg-blue-600 hover:bg-blue-700 text-white" 
+                          : "bg-gray-100 text-gray-400 cursor-not-allowed"
+                        }
                       >
                         {seller.hasGoogleCalendar ? 'Book Appointment' : 'Calendar Not Connected'}
                       </Button>
@@ -322,36 +340,40 @@ const Buyer = ({ user, isGoogleConnected = false }: BuyerProps) => {
         </div>
       ) : (
         // Appointment Booking View
-        <div className="max-w-2xl mx-auto">
-          <Card>
-            <CardHeader>
-              <CardTitle>Book with {selectedSeller.business_name}</CardTitle>
-              <CardDescription>{selectedSeller.description}</CardDescription>
+        <div className="max-w-3xl mx-auto">
+          <Card className="shadow-lg border border-gray-200">
+            <CardHeader className="bg-gradient-to-r from-blue-50 to-indigo-50 border-b border-gray-200">
+              <CardTitle className="text-2xl text-gray-800">Book with {selectedSeller.business_name}</CardTitle>
+              <CardDescription className="text-gray-600 mt-1">{selectedSeller.description}</CardDescription>
             </CardHeader>
-            <CardContent className="space-y-6">
+            <CardContent className="p-8 space-y-8">
               {/* Date Selection */}
               <div>
-                <label className="block text-sm font-medium mb-2">Select Date</label>
+                <label className="block text-sm font-semibold text-gray-800 mb-3">Select Date</label>
                 <input
                   type="date"
                   value={selectedDate}
                   min={new Date().toISOString().split('T')[0]}
                   onChange={(e) => setSelectedDate(e.target.value)}
-                  className="border border-gray-300 rounded-md px-3 py-2 w-full"
+                  className="border border-gray-300 rounded-lg px-4 py-3 w-full text-gray-800 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-medium"
                 />
               </div>
 
               {/* Time Slots */}
               <div>
-                <label className="block text-sm font-medium mb-2">
+                <label className="block text-sm font-semibold text-gray-800 mb-3">
                   Available Times for {formatDate(selectedDate)}
                 </label>
                 {availableSlots.length === 0 ? (
-                  <div className="text-center py-4 text-gray-500">
-                    No available slots for this date
+                  <div className="text-center py-8 bg-gray-50 rounded-lg">
+                    <div className="w-12 h-12 mx-auto mb-3 bg-gray-200 rounded-full flex items-center justify-center">
+                      <span className="text-gray-400">📅</span>
+                    </div>
+                    <p className="text-gray-600 font-medium">No available slots for this date</p>
+                    <p className="text-sm text-gray-500 mt-1">Try selecting a different date</p>
                   </div>
                 ) : (
-                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
                     {availableSlots
                       .filter(slot => slot.available)
                       .map((slot, index) => (
@@ -359,7 +381,10 @@ const Buyer = ({ user, isGoogleConnected = false }: BuyerProps) => {
                           key={index}
                           variant={selectedSlot === slot ? "default" : "outline"}
                           onClick={() => setSelectedSlot(slot)}
-                          className="text-sm"
+                          className={selectedSlot === slot 
+                            ? "bg-blue-600 hover:bg-blue-700 text-white border-blue-600" 
+                            : "border-gray-300 text-gray-700 hover:bg-blue-50 hover:border-blue-300"
+                          }
                         >
                           {formatTime(slot.start)} - {formatTime(slot.end)}
                         </Button>
@@ -370,46 +395,71 @@ const Buyer = ({ user, isGoogleConnected = false }: BuyerProps) => {
 
               {/* Appointment Details */}
               {selectedSlot && (
-                <div className="space-y-4">
+                <div className="space-y-6 border-t border-gray-200 pt-8">
                   <div>
-                    <label className="block text-sm font-medium mb-2">Appointment Title *</label>
+                    <label className="block text-sm font-semibold text-gray-800 mb-3">
+                      Appointment Title <span className="text-red-500">*</span>
+                    </label>
                     <input
                       type="text"
                       value={appointmentDetails.title}
                       onChange={(e) => setAppointmentDetails(prev => ({ ...prev, title: e.target.value }))}
                       placeholder="e.g., Consultation Meeting"
-                      className="border border-gray-300 rounded-md px-3 py-2 w-full"
+                      className="border border-gray-300 rounded-lg px-4 py-3 w-full text-gray-800 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                       required
                     />
                   </div>
 
                   <div>
-                    <label className="block text-sm font-medium mb-2">Description (optional)</label>
+                    <label className="block text-sm font-semibold text-gray-800 mb-3">Description (optional)</label>
                     <textarea
                       value={appointmentDetails.description}
                       onChange={(e) => setAppointmentDetails(prev => ({ ...prev, description: e.target.value }))}
                       placeholder="Any additional details or requirements..."
-                      rows={3}
-                      className="border border-gray-300 rounded-md px-3 py-2 w-full"
+                      rows={4}
+                      className="border border-gray-300 rounded-lg px-4 py-3 w-full text-gray-800 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none"
                     />
                   </div>
 
-                  <div className="bg-blue-50 p-4 rounded-md">
-                    <h4 className="font-semibold text-blue-800 mb-2">Booking Summary</h4>
-                    <div className="text-sm space-y-1 text-blue-700">
-                      <p><strong>Provider:</strong> {selectedSeller.business_name}</p>
-                      <p><strong>Date:</strong> {formatDate(selectedSlot.start)}</p>
-                      <p><strong>Time:</strong> {formatTime(selectedSlot.start)} - {formatTime(selectedSlot.end)}</p>
-                      <p><strong>Duration:</strong> {Math.round((new Date(selectedSlot.end).getTime() - new Date(selectedSlot.start).getTime()) / (1000 * 60))} minutes</p>
+                  <div className="bg-blue-50 border border-blue-200 p-6 rounded-lg">
+                    <h4 className="font-semibold text-blue-800 mb-4 flex items-center">
+                      📋 Booking Summary
+                    </h4>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                      <div>
+                        <span className="font-medium text-blue-700">Provider:</span>
+                        <p className="text-blue-800 mt-1">{selectedSeller.business_name}</p>
+                      </div>
+                      <div>
+                        <span className="font-medium text-blue-700">Duration:</span>
+                        <p className="text-blue-800 mt-1">
+                          {Math.round((new Date(selectedSlot.end).getTime() - new Date(selectedSlot.start).getTime()) / (1000 * 60))} minutes
+                        </p>
+                      </div>
+                      <div>
+                        <span className="font-medium text-blue-700">Date:</span>
+                        <p className="text-blue-800 mt-1">{formatDate(selectedSlot.start)}</p>
+                      </div>
+                      <div>
+                        <span className="font-medium text-blue-700">Time:</span>
+                        <p className="text-blue-800 mt-1">{formatTime(selectedSlot.start)} - {formatTime(selectedSlot.end)}</p>
+                      </div>
                     </div>
                   </div>
 
                   <Button 
                     onClick={handleBookAppointment} 
                     disabled={loading || !appointmentDetails.title}
-                    className="w-full"
+                    className="w-full py-4 text-lg font-medium bg-blue-600 hover:bg-blue-700 text-white disabled:bg-gray-300 disabled:text-gray-500"
                   >
-                    {loading ? 'Booking...' : 'Confirm Booking'}
+                    {loading ? (
+                      <span className="flex items-center justify-center">
+                        <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white mr-2"></div>
+                        Booking...
+                      </span>
+                    ) : (
+                      'Confirm Booking'
+                    )}
                   </Button>
                 </div>
               )}

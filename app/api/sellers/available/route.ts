@@ -1,22 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import supabase from '@/lib/supabase';
+import supabaseAdmin from '@/lib/supabaseAdmin';
 
 export async function GET(request: NextRequest) {
   try {
-    // Get the authorization header
-    const authHeader = request.headers.get('Authorization');
-    if (authHeader) {
-      // Set the session for this request
-      const token = authHeader.replace('Bearer ', '');
-      await supabase.auth.setSession({
-        access_token: token,
-        refresh_token: '', // We don't need refresh token for this operation
-      });
-    }
-
     // First, let's just get sellers without any joins to debug
     console.log('Fetching sellers...');
-    const { data: sellersOnly, error: sellersError } = await supabase
+    const { data: sellersOnly, error: sellersError } = await supabaseAdmin
       .from('sellers')
       .select('*')
       .eq('is_active', true);
@@ -24,7 +13,7 @@ export async function GET(request: NextRequest) {
     console.log('Sellers only result:', { sellersOnly, sellersError });
 
     // Now try with user_profiles join
-    const { data: sellers, error } = await supabase
+    const { data: sellers, error } = await supabaseAdmin
       .from('sellers')
       .select(`
         id,
@@ -51,10 +40,13 @@ export async function GET(request: NextRequest) {
     let tokens: any[] = [];
     
     if (sellerUserIds.length > 0) {
-      const { data: tokenData, error: tokenError } = await supabase
+      const { data: tokenData, error: tokenError } = await supabaseAdmin
         .from('google_calendar_tokens')
         .select('user_id, access_token, expires_at')
-        .in('user_id', sellerUserIds);
+        .in('user_id', sellerUserIds)
+        .eq('user_type', 'seller');
+
+      console.log('Token check result:', { tokenData, tokenError });
 
       if (!tokenError) {
         tokens = tokenData || [];
@@ -72,15 +64,16 @@ export async function GET(request: NextRequest) {
 
       return {
         id: seller.id,
-        businessName: seller.business_name || 'Unknown Business',
+        business_name: seller.business_name || 'Unknown Business',
         description: seller.description || 'No description available',
         location: seller.location || 'Location not specified',
-        userProfile: {
-          email: userProfile?.email || '',
-          fullName: userProfile?.full_name || 'Unknown',
-        },
-        hasGoogleCalendar: !!userToken,
-        isOnline: userToken && new Date(userToken.expires_at) > new Date(),
+        user_id: seller.user_id,
+        user_profiles: userProfile ? {
+          email: userProfile.email || '',
+          full_name: userProfile.full_name || 'Unknown',
+        } : null,
+        hasGoogleCalendar: !!userToken && new Date(userToken.expires_at) > new Date(),
+        isOnline: !!userToken && new Date(userToken.expires_at) > new Date(),
       };
     }) || [];
 

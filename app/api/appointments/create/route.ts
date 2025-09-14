@@ -91,13 +91,17 @@ export async function POST(request: NextRequest) {
       errors: [] as string[]
     };
 
+    // Get the base URL for API calls
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || `http://localhost:3000`;
+
     try {
       // Create calendar event for buyer
-      const buyerCalendarResponse = await fetch(`${process.env.NEXT_PUBLIC_APP_URL}/api/calendar/create-event`, {
+      const buyerCalendarResponse = await fetch(`${baseUrl}/api/calendar/create-event`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           userId: buyerId,
+          userType: 'buyer',
           eventData: {
             summary: `${title} - Meeting with ${sellerProfile.full_name || 'Seller'}`,
             start: startTime,
@@ -112,21 +116,25 @@ export async function POST(request: NextRequest) {
         const buyerEvent = await buyerCalendarResponse.json();
         googleCalendarResults.buyerEventCreated = true;
         googleCalendarResults.buyerEventId = buyerEvent.id;
+        console.log('Buyer calendar event created:', buyerEvent.id);
       } else {
         const error = await buyerCalendarResponse.text();
+        console.error('Buyer calendar error:', error);
         googleCalendarResults.errors.push(`Buyer calendar: ${error}`);
       }
     } catch (error) {
+      console.error('Buyer calendar error:', error);
       googleCalendarResults.errors.push(`Buyer calendar error: ${error}`);
     }
 
     try {
       // Create calendar event for seller
-      const sellerCalendarResponse = await fetch(`${process.env.NEXT_PUBLIC_APP_URL}/api/calendar/create-event`, {
+      const sellerCalendarResponse = await fetch(`${baseUrl}/api/calendar/create-event`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           userId: seller.user_id,
+          userType: 'seller',
           eventData: {
             summary: `${title} - Meeting with ${buyer.full_name || 'Client'}`,
             start: startTime,
@@ -141,11 +149,14 @@ export async function POST(request: NextRequest) {
         const sellerEvent = await sellerCalendarResponse.json();
         googleCalendarResults.sellerEventCreated = true;
         googleCalendarResults.sellerEventId = sellerEvent.id;
+        console.log('Seller calendar event created:', sellerEvent.id);
       } else {
         const error = await sellerCalendarResponse.text();
+        console.error('Seller calendar error:', error);
         googleCalendarResults.errors.push(`Seller calendar: ${error}`);
       }
     } catch (error) {
+      console.error('Seller calendar error:', error);
       googleCalendarResults.errors.push(`Seller calendar error: ${error}`);
     }
 

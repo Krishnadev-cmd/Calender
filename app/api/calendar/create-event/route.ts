@@ -8,21 +8,28 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 
 export async function POST(request: NextRequest) {
   try {
-    const { userId, eventData } = await request.json();
+    const { userId, eventData, userType = 'buyer' } = await request.json();
     
     if (!userId || !eventData) {
       return NextResponse.json({ error: 'User ID and event data are required' }, { status: 400 });
     }
 
-    // Get user's Google Calendar tokens
+    console.log('Creating calendar event for user:', userId, 'type:', userType);
+
+    // Get user's Google Calendar tokens with user_type
     const { data: tokens, error: tokenError } = await supabase
       .from('google_calendar_tokens')
       .select('access_token, refresh_token, expires_at')
       .eq('user_id', userId)
+      .eq('user_type', userType)
       .single();
 
     if (tokenError || !tokens) {
-      return NextResponse.json({ error: 'Google Calendar not connected for this user' }, { status: 400 });
+      console.error('Token fetch error:', tokenError);
+      return NextResponse.json({ 
+        error: 'Google Calendar not connected for this user', 
+        details: tokenError 
+      }, { status: 400 });
     }
 
     // Check if tokens are expired and need refresh

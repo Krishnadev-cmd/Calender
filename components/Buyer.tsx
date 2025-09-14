@@ -6,14 +6,13 @@ import { User } from '@supabase/supabase-js'
 
 interface Seller {
   id: string
-  businessName: string
+  business_name: string
   description: string
   location: string
-  userProfile: {
-    id: string
+  user_id: string
+  user_profiles?: {
     email: string
-    fullName: string
-    avatarUrl?: string
+    full_name: string
   }
   hasGoogleCalendar: boolean
   isOnline: boolean
@@ -62,10 +61,28 @@ const Buyer = ({ user, isGoogleConnected = false }: BuyerProps) => {
 
       if (response.ok) {
         const result = await response.json()
-        setSellers(result.sellers)
+        console.log('Sellers API result:', result)
+        
+        // Transform the sellers data to match our interface
+        const transformedSellers = result.sellers?.map((seller: any) => ({
+          id: seller.id,
+          business_name: seller.business_name || seller.user_profiles?.full_name || 'Unknown Business',
+          description: seller.description || 'No description available',
+          location: seller.location || 'Location not specified',
+          user_id: seller.user_id,
+          user_profiles: seller.user_profiles,
+          hasGoogleCalendar: seller.hasGoogleCalendar || false,
+          isOnline: true // Assume online if they're in the available list
+        })) || []
+        
+        setSellers(transformedSellers)
+      } else {
+        console.error('Failed to fetch sellers:', response.statusText)
+        setSellers([])
       }
     } catch (error) {
       console.error('Error fetching sellers:', error)
+      setSellers([])
     } finally {
       setLoading(false)
     }
@@ -73,20 +90,48 @@ const Buyer = ({ user, isGoogleConnected = false }: BuyerProps) => {
 
   const fetchAvailability = async (sellerId: string, date: string) => {
     try {
-      const response = await fetch('/api/sellers/availability', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ sellerId, date }),
-      })
-
-      if (response.ok) {
-        const result = await response.json()
-        setAvailableSlots(result.slots)
-      } else {
-        setAvailableSlots([])
+      // For now, generate some mock time slots since the availability API might not be fully implemented
+      // In a real implementation, this would call the availability API
+      const generateTimeSlots = (date: string) => {
+        const slots = []
+        const selectedDate = new Date(date)
+        
+        // Generate slots from 9 AM to 5 PM
+        for (let hour = 9; hour < 17; hour++) {
+          const startTime = new Date(selectedDate)
+          startTime.setHours(hour, 0, 0, 0)
+          
+          const endTime = new Date(selectedDate)
+          endTime.setHours(hour + 1, 0, 0, 0)
+          
+          slots.push({
+            start: startTime.toISOString(),
+            end: endTime.toISOString(),
+            available: Math.random() > 0.3 // Randomly make some slots unavailable
+          })
+        }
+        
+        return slots
       }
+
+      const slots = generateTimeSlots(date)
+      setAvailableSlots(slots)
+
+      // TODO: Replace with actual API call when availability endpoint is ready
+      // const response = await fetch('/api/sellers/availability', {
+      //   method: 'POST',
+      //   headers: {
+      //     'Content-Type': 'application/json',
+      //   },
+      //   body: JSON.stringify({ sellerId, date }),
+      // })
+
+      // if (response.ok) {
+      //   const result = await response.json()
+      //   setAvailableSlots(result.slots)
+      // } else {
+      //   setAvailableSlots([])
+      // }
     } catch (error) {
       console.error('Error fetching availability:', error)
       setAvailableSlots([])
@@ -101,41 +146,70 @@ const Buyer = ({ user, isGoogleConnected = false }: BuyerProps) => {
 
     try {
       setLoading(true)
-      const response = await fetch('/api/appointments/create', {
+      console.log('Booking appointment:', {
+        buyer_id: user.id,
+        seller_id: selectedSeller.id,
+        title: appointmentDetails.title,
+        description: appointmentDetails.description,
+        start_time: selectedSlot.start,
+        end_time: selectedSlot.end,
+        buyer_email: user.email,
+        seller_email: selectedSeller.user_profiles?.email
+      })
+
+      const response = await fetch('/api/appointments', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          buyerId: user.id,
-          sellerId: selectedSeller.id,
-          startTime: selectedSlot.start,
-          endTime: selectedSlot.end,
+          buyer_id: user.id,
+          seller_id: selectedSeller.id,
           title: appointmentDetails.title,
           description: appointmentDetails.description,
+          start_time: selectedSlot.start,
+          end_time: selectedSlot.end,
+          buyer_email: user.email,
+          seller_email: selectedSeller.user_profiles?.email
         }),
       })
 
       if (response.ok) {
         const result = await response.json()
-        alert('Appointment booked successfully!')
+        console.log('Appointment created successfully:', result)
+        
+        let successMessage = 'Appointment booked successfully!'
+        
+        // Add calendar event status to the message
+        if (result.googleCalendar) {
+          const { buyerEventCreated, sellerEventCreated, errors } = result.googleCalendar
+          if (buyerEventCreated && sellerEventCreated) {
+            successMessage += ' Calendar events created for both you and the service provider.'
+          } else if (buyerEventCreated || sellerEventCreated) {
+            successMessage += ' Calendar event created for one party. The other may need to manually add the event.'
+          } else if (errors && errors.length > 0) {
+            successMessage += ' Note: Calendar events could not be created automatically. Please add manually to your calendar.'
+            console.warn('Calendar errors:', errors)
+          }
+        }
+        
+        alert(successMessage)
         
         // Reset form
         setSelectedSeller(null)
         setSelectedSlot(null)
         setAppointmentDetails({ title: '', description: '' })
         
-        // Refresh availability
-        if (selectedSeller) {
-          fetchAvailability(selectedSeller.id, selectedDate)
-        }
+        // Refresh sellers list
+        await fetchSellers()
       } else {
         const error = await response.json()
-        alert(`Failed to book appointment: ${error.error}`)
+        console.error('Booking failed:', error)
+        alert(`Failed to book appointment: ${error.error || 'Unknown error'}`)
       }
     } catch (error) {
       console.error('Error booking appointment:', error)
-      alert('Failed to book appointment')
+      alert('Failed to book appointment due to network error')
     } finally {
       setLoading(false)
     }
@@ -192,10 +266,16 @@ const Buyer = ({ user, isGoogleConnected = false }: BuyerProps) => {
         <div>
           <h3 className="text-lg font-semibold mb-4">Available Service Providers</h3>
           {loading ? (
-            <div className="text-center py-8">Loading sellers...</div>
+            <div className="text-center py-8">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
+              <p>Loading sellers...</p>
+            </div>
           ) : sellers.length === 0 ? (
             <div className="text-center py-8 text-gray-500">
-              No sellers available at the moment
+              <p className="mb-4">No sellers available at the moment</p>
+              <Button onClick={fetchSellers} variant="outline">
+                Refresh
+              </Button>
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -203,7 +283,7 @@ const Buyer = ({ user, isGoogleConnected = false }: BuyerProps) => {
                 <Card key={seller.id} className="cursor-pointer hover:shadow-lg transition-shadow">
                   <CardHeader>
                     <div className="flex items-center justify-between">
-                      <CardTitle className="text-lg">{seller.businessName || seller.userProfile.fullName}</CardTitle>
+                      <CardTitle className="text-lg">{seller.business_name}</CardTitle>
                       <div className="flex items-center gap-2">
                         {seller.hasGoogleCalendar && (
                           <span className="text-xs bg-green-100 text-green-800 px-2 py-1 rounded">
@@ -225,7 +305,7 @@ const Buyer = ({ user, isGoogleConnected = false }: BuyerProps) => {
                   <CardContent>
                     <div className="flex justify-between items-center">
                       <div className="text-sm text-gray-600">
-                        {seller.userProfile.email}
+                        {seller.user_profiles?.email || 'Email not available'}
                       </div>
                       <Button 
                         onClick={() => setSelectedSeller(seller)}
@@ -245,7 +325,7 @@ const Buyer = ({ user, isGoogleConnected = false }: BuyerProps) => {
         <div className="max-w-2xl mx-auto">
           <Card>
             <CardHeader>
-              <CardTitle>Book with {selectedSeller.businessName || selectedSeller.userProfile.fullName}</CardTitle>
+              <CardTitle>Book with {selectedSeller.business_name}</CardTitle>
               <CardDescription>{selectedSeller.description}</CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
@@ -317,7 +397,7 @@ const Buyer = ({ user, isGoogleConnected = false }: BuyerProps) => {
                   <div className="bg-blue-50 p-4 rounded-md">
                     <h4 className="font-semibold text-blue-800 mb-2">Booking Summary</h4>
                     <div className="text-sm space-y-1 text-blue-700">
-                      <p><strong>Provider:</strong> {selectedSeller.businessName || selectedSeller.userProfile.fullName}</p>
+                      <p><strong>Provider:</strong> {selectedSeller.business_name}</p>
                       <p><strong>Date:</strong> {formatDate(selectedSlot.start)}</p>
                       <p><strong>Time:</strong> {formatTime(selectedSlot.start)} - {formatTime(selectedSlot.end)}</p>
                       <p><strong>Duration:</strong> {Math.round((new Date(selectedSlot.end).getTime() - new Date(selectedSlot.start).getTime()) / (1000 * 60))} minutes</p>

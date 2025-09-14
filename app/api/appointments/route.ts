@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
-import supabase from '@/lib/supabase'
+import supabaseAdmin from '@/lib/supabaseAdmin'
 import { googleCalendarService } from '@/lib/googleCalendar'
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
+    console.log('Creating appointment with data:', body)
+    
     const { 
       buyer_id, 
       seller_id, 
@@ -16,8 +18,45 @@ export async function POST(request: NextRequest) {
       seller_email 
     } = body
 
+    if (!buyer_id || !seller_id || !title || !start_time || !end_time) {
+      return NextResponse.json(
+        { error: 'Missing required fields: buyer_id, seller_id, title, start_time, end_time' },
+        { status: 400 }
+      )
+    }
+
+    // Get buyer and seller information for calendar events
+    const [buyerResult, sellerResult] = await Promise.all([
+      supabaseAdmin
+        .from('user_profiles')
+        .select('email, full_name')
+        .eq('id', buyer_id)
+        .single(),
+      supabaseAdmin
+        .from('sellers')
+        .select(`
+          id,
+          user_id,
+          business_name,
+          user_profiles!inner (
+            email,
+            full_name
+          )
+        `)
+        .eq('id', seller_id)
+        .single()
+    ]);
+
+    console.log('User lookup results:', { buyerResult, sellerResult });
+
+    const buyer = buyerResult.data;
+    const seller = sellerResult.data;
+    const sellerProfile = seller ? (Array.isArray(seller.user_profiles) 
+      ? seller.user_profiles[0] 
+      : seller.user_profiles) : null;
+
     // Create appointment in database
-    const { data: appointment, error } = await supabase
+    const { data: appointment, error } = await supabaseAdmin
       .from('appointments')
       .insert({
         buyer_id,
@@ -27,8 +66,8 @@ export async function POST(request: NextRequest) {
         start_time,
         end_time,
         status: 'pending',
-        buyer_email,
-        seller_email
+        buyer_email: buyer_email || buyer?.email,
+        seller_email: seller_email || sellerProfile?.email
       })
       .select()
       .single()
@@ -41,12 +80,98 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // TODO: Create Google Calendar events for both buyer and seller
-    // This will be implemented when Google Calendar OAuth is fully set up
-    
+    console.log('Appointment created successfully:', appointment);
+
+    // Create Google Calendar events for both buyer and seller
+    let googleCalendarResults = {
+      buyerEventCreated: false,
+      sellerEventCreated: false,
+      buyerEventId: null as string | null,
+      sellerEventId: null as string | null,
+      errors: [] as string[]
+    };
+
+    // Get the base URL for API calls
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || `http://localhost:3000`;
+
+    if (buyerResult.data && sellerResult.data) {
+      const buyer = buyerResult.data;
+      const seller = sellerResult.data;
+      const sellerProfile = Array.isArray(seller.user_profiles) 
+        ? seller.user_profiles[0] 
+        : seller.user_profiles;
+
+      try {
+        // Create calendar event for buyer
+        const buyerCalendarResponse = await fetch(`${baseUrl}/api/calendar/create-event`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userId: buyer_id,
+            userType: 'buyer',
+            eventData: {
+              summary: `${title} - Meeting with ${sellerProfile?.full_name || seller.business_name}`,
+              start: start_time,
+              end: end_time,
+              attendees: [buyer.email, sellerProfile?.email],
+              description: `${description || ''}\n\nAppointment with: ${sellerProfile?.full_name || seller.business_name}\nEmail: ${sellerProfile?.email}`
+            }
+          })
+        });
+
+        if (buyerCalendarResponse.ok) {
+          const buyerEvent = await buyerCalendarResponse.json();
+          googleCalendarResults.buyerEventCreated = true;
+          googleCalendarResults.buyerEventId = buyerEvent.id;
+          console.log('Buyer calendar event created:', buyerEvent.id);
+        } else {
+          const error = await buyerCalendarResponse.text();
+          console.error('Buyer calendar error:', error);
+          googleCalendarResults.errors.push(`Buyer calendar: ${error}`);
+        }
+      } catch (error) {
+        console.error('Buyer calendar error:', error);
+        googleCalendarResults.errors.push(`Buyer calendar error: ${error}`);
+      }
+
+      try {
+        // Create calendar event for seller
+        const sellerCalendarResponse = await fetch(`${baseUrl}/api/calendar/create-event`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userId: seller.user_id,
+            userType: 'seller',
+            eventData: {
+              summary: `${title} - Meeting with ${buyer.full_name || 'Client'}`,
+              start: start_time,
+              end: end_time,
+              attendees: [buyer.email, sellerProfile?.email],
+              description: `${description || ''}\n\nAppointment with: ${buyer.full_name || 'Client'}\nEmail: ${buyer.email}`
+            }
+          })
+        });
+
+        if (sellerCalendarResponse.ok) {
+          const sellerEvent = await sellerCalendarResponse.json();
+          googleCalendarResults.sellerEventCreated = true;
+          googleCalendarResults.sellerEventId = sellerEvent.id;
+          console.log('Seller calendar event created:', sellerEvent.id);
+        } else {
+          const error = await sellerCalendarResponse.text();
+          console.error('Seller calendar error:', error);
+          googleCalendarResults.errors.push(`Seller calendar: ${error}`);
+        }
+      } catch (error) {
+        console.error('Seller calendar error:', error);
+        googleCalendarResults.errors.push(`Seller calendar error: ${error}`);
+      }
+    }
+
     return NextResponse.json({ 
       success: true, 
-      appointment 
+      appointment,
+      googleCalendar: googleCalendarResults
     })
 
   } catch (error) {
@@ -74,7 +199,7 @@ export async function GET(request: NextRequest) {
     let appointments;
 
     if (role === 'buyer') {
-      const { data, error } = await supabase
+      const { data, error } = await supabaseAdmin
         .from('appointments')
         .select(`
           id,
@@ -106,7 +231,7 @@ export async function GET(request: NextRequest) {
       appointments = data
     } else if (role === 'seller') {
       // First get seller ID from user_id
-      const { data: seller } = await supabase
+      const { data: seller } = await supabaseAdmin
         .from('sellers')
         .select('id')
         .eq('user_id', user_id)
@@ -119,7 +244,7 @@ export async function GET(request: NextRequest) {
         )
       }
 
-      const { data, error } = await supabase
+      const { data, error } = await supabaseAdmin
         .from('appointments')
         .select(`
           id,

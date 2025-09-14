@@ -23,6 +23,8 @@ export async function POST(request: NextRequest) {
         token_type: 'Bearer',
         scope: 'https://www.googleapis.com/auth/calendar',
         updated_at: new Date()
+      }, {
+        onConflict: 'user_id,user_type'
       })
       .select();
 
@@ -49,7 +51,9 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'User ID is required' }, { status: 400 });
     }
 
-    const { data: tokens, error } = await supabase
+    console.log('Checking tokens for user:', userId, 'type:', userType);
+
+    const { data: tokens, error } = await supabaseAdmin
       .from('google_calendar_tokens')
       .select('*')
       .eq('user_id', userId)
@@ -58,6 +62,7 @@ export async function GET(request: NextRequest) {
 
     if (error) {
       if (error.code === 'PGRST116') {
+        console.log('No tokens found for user:', userId, 'type:', userType);
         return NextResponse.json({ connected: false });
       }
       console.error('Error fetching tokens:', error);
@@ -65,6 +70,14 @@ export async function GET(request: NextRequest) {
     }
 
     const isExpired = new Date(tokens.expires_at) <= new Date();
+    console.log('Token check result:', { 
+      userId, 
+      userType, 
+      hasTokens: !!tokens, 
+      isExpired, 
+      connected: !isExpired,
+      expiresAt: tokens.expires_at 
+    });
     
     return NextResponse.json({ 
       connected: !isExpired,

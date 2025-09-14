@@ -60,52 +60,42 @@ export default function Dashboard() {
           })
         }
         
-        // Check for Google Calendar connection status from database
+        // Check for Google Calendar connection status from API
         const checkGoogleConnection = async () => {
           try {
-            // Check for both buyer and seller tokens since table has user_type constraint
-            const [buyerTokensResult, sellerTokensResult] = await Promise.all([
-              supabase
-                .from('google_calendar_tokens')
-                .select('*')
-                .eq('user_id', session.user.id)
-                .eq('user_type', 'buyer')
-                .single(),
-              supabase
-                .from('google_calendar_tokens')
-                .select('*')
-                .eq('user_id', session.user.id)
-                .eq('user_type', 'seller')
-                .single()
+            // Use API endpoint to check tokens (bypasses RLS policies)
+            const [buyerResponse, sellerResponse] = await Promise.all([
+              fetch(`/api/store-tokens?userId=${session.user.id}&userType=buyer`),
+              fetch(`/api/store-tokens?userId=${session.user.id}&userType=seller`)
             ]);
 
-            const buyerTokens = buyerTokensResult.data;
-            const sellerTokens = sellerTokensResult.data;
+            const buyerResult = await buyerResponse.json();
+            const sellerResult = await sellerResponse.json();
             
             console.log('Token check results:', { 
-              buyerFound: !!buyerTokens, 
-              sellerFound: !!sellerTokens,
-              buyerError: buyerTokensResult.error?.code,
-              sellerError: sellerTokensResult.error?.code
+              buyerConnected: buyerResult.connected || false, 
+              sellerConnected: sellerResult.connected || false,
+              buyerError: !buyerResponse.ok ? 'API_ERROR' : null,
+              sellerError: !sellerResponse.ok ? 'API_ERROR' : null
             });
 
-            const hasAnyTokens = buyerTokens || sellerTokens;
+            const hasAnyTokens = buyerResult.connected || sellerResult.connected;
             
             if (hasAnyTokens) {
               setIsGoogleConnected(true);
               
               // Store tokens in localStorage for client-side usage
-              if (buyerTokens) {
-                localStorage.setItem('google_calendar_tokens_buyer', JSON.stringify(buyerTokens));
+              if (buyerResult.connected && buyerResult.tokens) {
+                localStorage.setItem('google_calendar_tokens_buyer', JSON.stringify(buyerResult.tokens));
               }
-              if (sellerTokens) {
-                localStorage.setItem('google_calendar_tokens_seller', JSON.stringify(sellerTokens));
+              if (sellerResult.connected && sellerResult.tokens) {
+                localStorage.setItem('google_calendar_tokens_seller', JSON.stringify(sellerResult.tokens));
               }
               
               // Set tokens for both roles
               setGoogleTokens({
-                buyer: buyerTokens,
-                seller: sellerTokens
+                buyer: buyerResult.connected ? buyerResult.tokens : null,
+                seller: sellerResult.connected ? sellerResult.tokens : null
               });
             } else {
               setIsGoogleConnected(false);

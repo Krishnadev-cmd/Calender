@@ -2,7 +2,7 @@
 import supabase from '@/lib/supabase'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useEffect, useState, Suspense } from 'react'
-import { handleSignInWithGoogle } from '../actions/auth/route'
+import { handleSignInWithGoogle } from '../actions/auth/auth'
 
 export function LoginContent() {
   const router = useRouter()

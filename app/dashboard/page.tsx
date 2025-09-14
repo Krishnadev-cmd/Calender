@@ -9,7 +9,7 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import Buyer from '@/components/Buyer'
 import Seller from '@/components/Seller'
 import RoleSelection from '@/components/RoleSelection'
-import { handleSignOut } from '../actions/auth/route'
+import { handleSignOut } from '../actions/auth/auth'
 import { Button } from '@/components/ui/button'
 
 interface UserProfile {

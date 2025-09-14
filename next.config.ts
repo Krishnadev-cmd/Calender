@@ -7,9 +7,7 @@ const nextConfig: NextConfig = {
   typescript: {
     ignoreBuildErrors: false,
   },
-  experimental: {
-    serverComponentsExternalPackages: ['googleapis'],
-  },
+  serverExternalPackages: ['googleapis'],
   env: {
     NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL,
   },

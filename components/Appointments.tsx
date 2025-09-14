@@ -1,254 +1,325 @@
 import React, { useState, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
-import { googleCalendarService, CalendarEvent } from '@/lib/googleCalendar'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Badge } from '@/components/ui/badge'
+import supabase from '@/lib/supabase'
+import { User } from '@supabase/supabase-js'
 
-interface AppointmentDetails extends CalendarEvent {
-  type: 'upcoming' | 'past'
-  otherParticipant: string
-  userRole: 'buyer' | 'seller'
+interface Appointment {
+  id: string
+  title: string
+  description?: string
+  start_time: string
+  end_time: string
+  status: 'pending' | 'confirmed' | 'cancelled' | 'completed'
+  google_calendar_event_id?: string
+  meet_link?: string
+  created_at: string
+  // For buyer appointments
+  sellers?: {
+    id: string
+    business_name: string
+    user_profiles: {
+      full_name: string
+      email: string
+    }
+  }
+  // For seller appointments
+  user_profiles?: {
+    full_name: string
+    email: string
+  }
 }
 
-const Appointments = () => {
-  const [appointments, setAppointments] = useState<AppointmentDetails[]>([])
+interface AppointmentsProps {
+  user?: User
+  userRole?: 'buyer' | 'seller'
+}
+
+const Appointments = ({ user, userRole }: AppointmentsProps) => {
+  const [appointments, setAppointments] = useState<Appointment[]>([])
   const [loading, setLoading] = useState(true)
-  const [filter, setFilter] = useState<'all' | 'upcoming' | 'past'>('all')
+  const [filter, setFilter] = useState<'all' | 'upcoming' | 'past' | 'pending' | 'confirmed'>('upcoming')
+
+  useEffect(() => {
+    if (user && userRole) {
+      loadAppointments()
+    }
+  }, [user, userRole])
 
   const loadAppointments = async () => {
+    if (!user || !userRole) return
+
     setLoading(true)
     try {
-      const timeMin = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString() // Past 30 days
-      const timeMax = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString() // Next 30 days
+      const response = await fetch(`/api/appointments/list?userId=${user.id}&role=${userRole}`)
       
-      const events = await googleCalendarService.getCalendarEvents(timeMin, timeMax)
-      const now = new Date()
-      
-      const appointmentDetails: AppointmentDetails[] = events.map(event => ({
-        ...event,
-        type: new Date(event.start.dateTime) > now ? 'upcoming' : 'past',
-        otherParticipant: event.attendees?.[0]?.displayName || event.attendees?.[0]?.email || 'Unknown',
-        userRole: 'buyer' // You'd determine this based on your app logic
-      }))
-      
-      setAppointments(appointmentDetails)
+      if (response.ok) {
+        const result = await response.json()
+        setAppointments(result.appointments || [])
+      } else {
+        console.error('Failed to fetch appointments')
+        setAppointments([])
+      }
     } catch (error) {
-      console.error('Failed to load appointments:', error)
+      console.error('Error loading appointments:', error)
+      setAppointments([])
     } finally {
       setLoading(false)
     }
   }
 
-  const filteredAppointments = appointments.filter(appointment => {
-    if (filter === 'all') return true
-    return appointment.type === filter
-  })
+  const getFilteredAppointments = () => {
+    const now = new Date()
+    
+    return appointments.filter(appointment => {
+      const appointmentTime = new Date(appointment.start_time)
+      
+      switch (filter) {
+        case 'upcoming':
+          return appointmentTime > now
+        case 'past':
+          return appointmentTime <= now
+        case 'pending':
+          return appointment.status === 'pending'
+        case 'confirmed':
+          return appointment.status === 'confirmed'
+        default:
+          return true
+      }
+    })
+  }
 
   const formatDateTime = (dateTime: string) => {
     const date = new Date(dateTime)
     return {
-      date: date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }),
-      time: date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
+      date: date.toLocaleDateString('en-US', { 
+        weekday: 'long', 
+        year: 'numeric', 
+        month: 'long', 
+        day: 'numeric' 
+      }),
+      time: date.toLocaleTimeString('en-US', { 
+        hour: 'numeric', 
+        minute: '2-digit',
+        hour12: true 
+      })
     }
   }
 
-  const getStatusColor = (appointment: AppointmentDetails) => {
-    if (appointment.type === 'past') return 'bg-gray-100 text-gray-700'
-    return 'bg-green-100 text-green-700'
-  }
-
-  const joinMeeting = (meetLink?: string) => {
-    if (meetLink) {
-      window.open(meetLink, '_blank')
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'pending': return 'bg-yellow-100 text-yellow-800'
+      case 'confirmed': return 'bg-green-100 text-green-800'
+      case 'cancelled': return 'bg-red-100 text-red-800'
+      case 'completed': return 'bg-blue-100 text-blue-800'
+      default: return 'bg-gray-100 text-gray-800'
     }
   }
 
-  useEffect(() => {
-    loadAppointments()
-  }, [])
+  const getOtherParticipant = (appointment: Appointment) => {
+    if (userRole === 'buyer' && appointment.sellers) {
+      return {
+        name: appointment.sellers.business_name || appointment.sellers.user_profiles?.full_name || 'Unknown',
+        email: appointment.sellers.user_profiles?.email || ''
+      }
+    } else if (userRole === 'seller' && appointment.user_profiles) {
+      return {
+        name: appointment.user_profiles.full_name || 'Unknown Client',
+        email: appointment.user_profiles.email || ''
+      }
+    }
+    return { name: 'Unknown', email: '' }
+  }
+
+  const handleStatusUpdate = async (appointmentId: string, newStatus: string) => {
+    try {
+      const response = await fetch('/api/appointments/update-status', {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          appointmentId,
+          status: newStatus,
+          userId: user?.id,
+        }),
+      });
+
+      if (response.ok) {
+        alert(`Appointment ${newStatus} successfully!`);
+        await loadAppointments(); // Reload appointments
+      } else {
+        const error = await response.json();
+        alert(`Failed to update appointment: ${error.error}`);
+      }
+    } catch (error) {
+      console.error('Error updating appointment:', error);
+      alert('Failed to update appointment');
+    }
+  }
+
+  const filteredAppointments = getFilteredAppointments()
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p>Loading appointments...</p>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6">
-      {/* Header Section */}
-      <div className="flex items-center justify-between mb-6">
-        <div className="flex items-center gap-3">
-          <div className="p-3 bg-purple-100 rounded-xl">
-            <svg className="w-6 h-6 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-            </svg>
-          </div>
-          <div>
-            <h2 className="text-xl font-semibold text-gray-800">My Appointments</h2>
-            <p className="text-sm text-gray-500">View and manage your scheduled appointments</p>
-          </div>
-        </div>
-        <Button onClick={loadAppointments} disabled={loading} variant="outline">
-          {loading ? 'Loading...' : 'Refresh'}
+      <div className="flex justify-between items-center">
+        <h2 className="text-2xl font-bold">My Appointments</h2>
+        <Button onClick={loadAppointments} variant="outline">
+          Refresh
         </Button>
       </div>
 
       {/* Filter Tabs */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-        <div className="bg-gradient-to-r from-purple-500 to-indigo-500 px-6 py-4">
-          <div className="flex gap-2">
-            {[
-              { key: 'all', label: 'All Appointments' },
-              { key: 'upcoming', label: 'Upcoming' },
-              { key: 'past', label: 'Past' }
-            ].map(({ key, label }) => (
-              <button
-                key={key}
-                onClick={() => setFilter(key as typeof filter)}
-                className={`px-4 py-2 rounded-lg font-medium text-sm transition-all duration-200 ${
-                  filter === key
-                    ? 'bg-white text-purple-600 shadow-sm'
-                    : 'text-purple-100 hover:text-white hover:bg-white/10'
-                }`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        </div>
+      <div className="flex space-x-2 border-b">
+        {[
+          { key: 'upcoming', label: 'Upcoming' },
+          { key: 'past', label: 'Past' },
+          { key: 'pending', label: 'Pending' },
+          { key: 'confirmed', label: 'Confirmed' },
+          { key: 'all', label: 'All' }
+        ].map(({ key, label }) => (
+          <button
+            key={key}
+            onClick={() => setFilter(key as any)}
+            className={`px-4 py-2 font-medium text-sm rounded-t-lg transition-colors ${
+              filter === key
+                ? 'bg-blue-50 text-blue-700 border-b-2 border-blue-700'
+                : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
 
-        <div className="p-6">
-          {loading ? (
-            <div className="text-center py-12">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600 mx-auto mb-4"></div>
-              <p className="text-gray-600">Loading your appointments...</p>
-            </div>
-          ) : filteredAppointments.length > 0 ? (
-            <div className="space-y-4">
-              {filteredAppointments.map(appointment => {
-                const { date, time } = formatDateTime(appointment.start.dateTime)
-                const endTime = formatDateTime(appointment.end.dateTime).time
-                
-                return (
-                  <div key={appointment.id} className="bg-gray-50 rounded-lg p-4 hover:bg-gray-100 transition-colors">
-                    <div className="flex items-center justify-between">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-3 mb-2">
-                          <h3 className="font-semibold text-gray-800">{appointment.summary}</h3>
-                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(appointment)}`}>
-                            {appointment.type === 'upcoming' ? 'Upcoming' : 'Completed'}
-                          </span>
-                        </div>
-                        
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-sm text-gray-600">
-                          <div className="flex items-center gap-1">
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                            </svg>
-                            <span>{date}</span>
-                          </div>
-                          
-                          <div className="flex items-center gap-1">
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                            </svg>
-                            <span>{time} - {endTime}</span>
-                          </div>
-                          
-                          <div className="flex items-center gap-1">
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                            </svg>
-                            <span>with {appointment.otherParticipant}</span>
-                          </div>
-                        </div>
+      {/* Appointments List */}
+      {filteredAppointments.length === 0 ? (
+        <div className="text-center py-12">
+          <div className="text-gray-400 mb-4">
+            <svg className="mx-auto h-12 w-12" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+            </svg>
+          </div>
+          <h3 className="text-lg font-medium text-gray-900 mb-2">No appointments found</h3>
+          <p className="text-gray-500">
+            {filter === 'upcoming' 
+              ? "You don't have any upcoming appointments" 
+              : `No ${filter} appointments found`}
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {filteredAppointments.map((appointment) => {
+            const participant = getOtherParticipant(appointment)
+            const { date, time } = formatDateTime(appointment.start_time)
+            const { time: endTime } = formatDateTime(appointment.end_time)
+            const isUpcoming = new Date(appointment.start_time) > new Date()
+
+            return (
+              <Card key={appointment.id} className="hover:shadow-md transition-shadow">
+                <CardHeader>
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <CardTitle className="text-lg">{appointment.title}</CardTitle>
+                      <CardDescription className="mt-1">
+                        {userRole === 'buyer' ? 'with' : 'with client'} {participant.name}
+                      </CardDescription>
+                    </div>
+                    <Badge className={getStatusColor(appointment.status)}>
+                      {appointment.status.charAt(0).toUpperCase() + appointment.status.slice(1)}
+                    </Badge>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-3">
+                    {/* Date and Time */}
+                    <div className="flex items-center space-x-4 text-sm">
+                      <div className="flex items-center space-x-2">
+                        <svg className="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                        </svg>
+                        <span className="font-medium">{date}</span>
                       </div>
-                      
-                      <div className="flex gap-2 ml-4">
-                        {appointment.meetLink && appointment.type === 'upcoming' && (
-                          <Button
-                            onClick={() => joinMeeting(appointment.meetLink)}
-                            size="sm"
-                            className="bg-green-600 hover:bg-green-700 text-white"
-                          >
-                            <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                            </svg>
-                            Join
-                          </Button>
-                        )}
-                        
-                        <Button size="sm" variant="outline">
-                          <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                          </svg>
-                          Details
-                        </Button>
+                      <div className="flex items-center space-x-2">
+                        <svg className="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        <span>{time} - {endTime}</span>
                       </div>
                     </div>
+
+                    {/* Description */}
+                    {appointment.description && (
+                      <div className="text-sm text-gray-600">
+                        <p>{appointment.description}</p>
+                      </div>
+                    )}
+
+                    {/* Participant Info */}
+                    <div className="text-sm text-gray-600">
+                      <p><strong>Email:</strong> {participant.email}</p>
+                    </div>
+
+                    {/* Actions */}
+                    <div className="flex justify-between items-center pt-3 border-t">
+                      <div className="flex space-x-2">
+                        {appointment.meet_link && (
+                          <Button 
+                            size="sm" 
+                            onClick={() => window.open(appointment.meet_link, '_blank')}
+                            className="bg-blue-600 hover:bg-blue-700"
+                          >
+                            Join Meeting
+                          </Button>
+                        )}
+                        {appointment.google_calendar_event_id && (
+                          <Button size="sm" variant="outline">
+                            View in Calendar
+                          </Button>
+                        )}
+                      </div>
+
+                      {/* Status Actions */}
+                      {isUpcoming && userRole === 'seller' && appointment.status === 'pending' && (
+                        <div className="flex space-x-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleStatusUpdate(appointment.id, 'confirmed')}
+                            className="text-green-600 border-green-600 hover:bg-green-50"
+                          >
+                            Confirm
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleStatusUpdate(appointment.id, 'cancelled')}
+                            className="text-red-600 border-red-600 hover:bg-red-50"
+                          >
+                            Cancel
+                          </Button>
+                        </div>
+                      )}
+                    </div>
                   </div>
-                )
-              })}
-            </div>
-          ) : (
-            <div className="text-center py-12">
-              <div className="p-4 bg-gray-100 rounded-full w-16 h-16 mx-auto mb-4 flex items-center justify-center">
-                <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                </svg>
-              </div>
-              <h3 className="text-lg font-medium text-gray-800 mb-2">No appointments found</h3>
-              <p className="text-gray-600">
-                {filter === 'all' 
-                  ? "You don't have any appointments yet. Book your first appointment!"
-                  : `No ${filter} appointments to show.`
-                }
-              </p>
-            </div>
-          )}
+                </CardContent>
+              </Card>
+            )
+          })}
         </div>
-      </div>
-
-      {/* Statistics Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-blue-100 rounded-lg">
-              <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-              </svg>
-            </div>
-            <div>
-              <p className="text-sm font-medium text-gray-600">Total Appointments</p>
-              <p className="text-2xl font-bold text-gray-900">{appointments.length}</p>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-green-100 rounded-lg">
-              <svg className="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-            </div>
-            <div>
-              <p className="text-sm font-medium text-gray-600">Upcoming</p>
-              <p className="text-2xl font-bold text-gray-900">
-                {appointments.filter(apt => apt.type === 'upcoming').length}
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-gray-100 rounded-lg">
-              <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-              </svg>
-            </div>
-            <div>
-              <p className="text-sm font-medium text-gray-600">Completed</p>
-              <p className="text-2xl font-bold text-gray-900">
-                {appointments.filter(apt => apt.type === 'past').length}
-              </p>
-            </div>
-          </div>
-        </div>
-      </div>
+      )}
     </div>
   )
 }

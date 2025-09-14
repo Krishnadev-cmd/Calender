@@ -63,24 +63,57 @@ export default function Dashboard() {
         // Check for Google Calendar connection status from database
         const checkGoogleConnection = async () => {
           try {
-            const response = await fetch('/api/store-tokens');
-            if (response.ok) {
-              const data = await response.json();
-              setIsGoogleConnected(data.connected);
+            // Check for both buyer and seller tokens since table has user_type constraint
+            const [buyerTokensResult, sellerTokensResult] = await Promise.all([
+              supabase
+                .from('google_calendar_tokens')
+                .select('*')
+                .eq('user_id', session.user.id)
+                .eq('user_type', 'buyer')
+                .single(),
+              supabase
+                .from('google_calendar_tokens')
+                .select('*')
+                .eq('user_id', session.user.id)
+                .eq('user_type', 'seller')
+                .single()
+            ]);
+
+            const buyerTokens = buyerTokensResult.data;
+            const sellerTokens = sellerTokensResult.data;
+            
+            console.log('Token check results:', { 
+              buyerFound: !!buyerTokens, 
+              sellerFound: !!sellerTokens,
+              buyerError: buyerTokensResult.error?.code,
+              sellerError: sellerTokensResult.error?.code
+            });
+
+            const hasAnyTokens = buyerTokens || sellerTokens;
+            
+            if (hasAnyTokens) {
+              setIsGoogleConnected(true);
               
-              if (data.connected && data.tokens) {
-                // Store tokens in localStorage for client-side usage
-                localStorage.setItem('google_calendar_tokens', JSON.stringify(data.tokens));
-                
-                // Set both buyer and seller as connected (unified approach)
-                setGoogleTokens({
-                  buyer: data.tokens,
-                  seller: data.tokens
-                });
+              // Store tokens in localStorage for client-side usage
+              if (buyerTokens) {
+                localStorage.setItem('google_calendar_tokens_buyer', JSON.stringify(buyerTokens));
               }
+              if (sellerTokens) {
+                localStorage.setItem('google_calendar_tokens_seller', JSON.stringify(sellerTokens));
+              }
+              
+              // Set tokens for both roles
+              setGoogleTokens({
+                buyer: buyerTokens,
+                seller: sellerTokens
+              });
+            } else {
+              setIsGoogleConnected(false);
+              setGoogleTokens({ buyer: null, seller: null });
             }
           } catch (error) {
             console.error('Error checking Google connection:', error);
+            setIsGoogleConnected(false);
           }
         };
 
@@ -91,12 +124,12 @@ export default function Dashboard() {
         const tokens = urlParams.get('tokens');
         
         if (googleConnected === 'true') {
-          setIsGoogleConnected(true);
-          
           // If tokens are provided in URL (fallback method)
           if (tokens) {
             try {
               const tokenData = JSON.parse(decodeURIComponent(tokens));
+              
+              setIsGoogleConnected(true);
               
               // Store in state
               setGoogleTokens(prev => ({
@@ -108,32 +141,19 @@ export default function Dashboard() {
               localStorage.setItem(`google_tokens_${userType}`, JSON.stringify(tokenData));
             } catch (error) {
               console.error('Error parsing tokens from URL:', error);
+              // Fallback to checking database
+              await checkGoogleConnection();
             }
           } else {
-            // If no tokens in URL, check database
+            // No tokens in URL, check database to verify connection
             await checkGoogleConnection();
           }
 
           // Clean up URL parameters
           window.history.replaceState({}, '', '/dashboard');
         } else {
-          // Check database for existing connection
+          // Normal flow - check database for existing connection
           await checkGoogleConnection();
-          
-          // Also check localStorage for backward compatibility
-          const buyerTokens = localStorage.getItem('google_tokens_buyer');
-          const sellerTokens = localStorage.getItem('google_tokens_seller');
-          
-          if (buyerTokens || sellerTokens) {
-            setGoogleTokens({
-              buyer: buyerTokens ? JSON.parse(buyerTokens) : null,
-              seller: sellerTokens ? JSON.parse(sellerTokens) : null
-            });
-            
-            if (buyerTokens || sellerTokens) {
-              setIsGoogleConnected(true);
-            }
-          }
         }
       } else {
         router.push('/login');
@@ -237,11 +257,11 @@ return (
 
                 <div className="p-8">
                   <TabsContent value="BookAppointments" className="mt-0">
-                    <Buyer isGoogleConnected={isGoogleConnected || !!googleTokens.buyer} />
+                    <Buyer user={user} isGoogleConnected={isGoogleConnected || !!googleTokens.buyer} />
                   </TabsContent>
 
                   <TabsContent value="MyAppointments" className="mt-0">
-                    <Appointments />
+                    <Appointments user={user} userRole={userProfile?.role} />
                   </TabsContent>
                 </div>
               </Tabs>
@@ -267,11 +287,11 @@ return (
 
                 <div className="p-8">
                   <TabsContent value="ManageCalendar" className="mt-0">
-                    <Seller isGoogleConnected={isGoogleConnected || !!googleTokens.seller} />
+                    <Seller user={user} isGoogleConnected={isGoogleConnected || !!googleTokens.seller} />
                   </TabsContent>
 
                   <TabsContent value="Appointments" className="mt-0">
-                    <Appointments />
+                    <Appointments user={user} userRole={userProfile?.role} />
                   </TabsContent>
                 </div>
               </Tabs>

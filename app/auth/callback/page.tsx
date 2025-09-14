@@ -13,6 +13,17 @@ export default function AuthCallback() {
         console.log('Processing auth callback...')
         console.log('Current URL:', window.location.href)
         
+        // Extract provider_token from URL fragment (Google Calendar token)
+        const urlParams = new URLSearchParams(window.location.hash.substring(1));
+        const providerToken = urlParams.get('provider_token');
+        const refreshToken = urlParams.get('refresh_token');
+        const expiresIn = urlParams.get('expires_in');
+        const userTypeFromGoogle = urlParams.get('user_type'); // From Google OAuth flow
+        
+        console.log('Provider token found:', !!providerToken);
+        console.log('Refresh token found:', !!refreshToken);
+        console.log('User type from Google OAuth:', userTypeFromGoogle);
+        
         // Get the current session (this will process the URL fragment automatically)
         const { data, error } = await supabase.auth.getSession()
         
@@ -24,7 +35,69 @@ export default function AuthCallback() {
 
         if (data.session) {
           console.log('User authenticated:', data.session.user.email)
-          router.push('/dashboard')
+          
+          // Store Google Calendar tokens if available
+          if (providerToken && data.session.user) {
+            console.log('Storing Google Calendar tokens...')
+            
+            // Determine user type priority: Google OAuth > URL params > localStorage > default
+            let userType = userTypeFromGoogle; // First priority: from Google OAuth
+            
+            if (!userType) {
+              // Second priority: check URL search params
+              const searchParams = new URLSearchParams(window.location.search);
+              userType = searchParams.get('user_type');
+            }
+            
+            if (!userType) {
+              // Third priority: try to get user type from localStorage
+              try {
+                const storedProfile = localStorage.getItem('user_profile');
+                if (storedProfile) {
+                  const profile = JSON.parse(storedProfile);
+                  userType = profile.role;
+                }
+              } catch (e) {
+                console.log('Could not get user type from localStorage');
+              }
+            }
+            
+            // Default fallback
+            userType = userType || 'buyer';
+            
+            console.log('Determined user type:', userType);
+            
+            try {
+              const response = await fetch('/api/store-tokens', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                  user_id: data.session.user.id,
+                  access_token: providerToken,
+                  refresh_token: refreshToken,
+                  expires_at: new Date(Date.now() + (parseInt(expiresIn || '3600') * 1000)).toISOString(),
+                  user_type: userType
+                })
+              });
+
+              if (response.ok) {
+                const result = await response.json();
+                console.log('Google Calendar tokens stored successfully:', result);
+                router.push(`/dashboard?google_connected=true&user_type=${userType}`);
+              } else {
+                const error = await response.text();
+                console.error('Failed to store tokens:', error);
+                router.push('/dashboard?google_error=storage_failed');
+              }
+            } catch (tokenError) {
+              console.error('Error storing tokens:', tokenError);
+              router.push('/dashboard?google_error=storage_error');
+            }
+          } else {
+            router.push('/dashboard');
+          }
         } else {
           console.log('No session found, trying to refresh...')
           // Try to refresh session from URL fragments
